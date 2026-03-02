@@ -1,0 +1,1 @@
+ "C:\Program Files\PostgreSQL\15\bin\psql.exe" -U postgres ALTER USER postgres WITH PASSWORD 'POST@info#box2024'; \q

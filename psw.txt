@@ -1,0 +1,24 @@
+password for the backend : POST@info#box2024
+
+  ┌──────────┬─────────────────────────┐
+  │  Field   │          Value          │
+  ├──────────┼─────────────────────────┤
+  │ Username │ test.user               │
+  ├──────────┼─────────────────────────┤
+  │ Password │ Test@1234               │
+  ├──────────┼─────────────────────────┤
+  │ Email    │ test.user@infobhoomi.lk │
+  ├──────────┼─────────────────────────┤
+  │ Role     │ super_admin  
+
+commands:\
+
+PS C:\InfoBhoomi\InfoBhoomi_Backend_dev2> myenv\Scripts\Activate.ps1^C
+PS C:\InfoBhoomi\InfoBhoomi_Backend_dev2> & c:\InfoBhoomi\InfoBhoomi_Backend_dev2\venv\Scripts\Activate.ps1
+
+python manage.py shell
+list(LA_LS_Land_Unit_Model.objects.exclude(land_name__isnull=True).exclude(land_name='').values('su_id_id', 'land_name','registration_date')[:20])
+
+  Tip: Working with HTML/CSS? Add the frontend-design plugin:
+     /plugin marketplace add anthropics/claude-code
+     /plugin install frontend-design@claude-code-plugins

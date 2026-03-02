@@ -1,0 +1,28 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+.env
+# adjust the above path to match your virtual environment's name
+
+# Django-specific files
+*.sqlite3
+db.sqlite
+/static-cdn/  # collected static files directory
+/media/       # uploaded media files directory (adjust as needed)
+
+# IDE-specific files (e.g., PyCharm, VS Code)
+.idea/
+.vscode/
+*.swp
+
+# OS-specific files
+.DS_Store    # macOS
+Thumbs.db    # Windows
+
+# Sensitive configuration files (if not using environment variables)
+# local_settings.py
