@@ -705,23 +705,6 @@ class Party_Model(models.Model):
                        UniqueConstraint(fields=['sl_party_type', 'specific_tp'], name='unique_sl_party_type_specific_tp')]
         db_table = 'sl_party'
 
-#_______________________________________________ Group Party Model ____________________________________________________________________
-class SL_Group_Party_Members_Model(models.Model):
-    id = models.AutoField(primary_key=True)
-    pid = models.ForeignKey('Party_Model', on_delete=models.CASCADE, db_column='pid', to_field='pid') # Group party id
-    # group_name = models.CharField(max_length=255, null=True)
-    
-    sl_group_party_type = models.IntegerField(null=False)
-
-    party_members = ArrayField(models.IntegerField(), null=False)
-
-    date_created = models.DateTimeField(auto_now_add=True)
-    done_by = models.IntegerField(null=False) # person who add the record
-
-    class Meta:
-        managed = True
-        db_table = 'sl_group_party_members'
-
 #_______________________________________________ History_Party_Attrib Model _____________________________________________________
 class History_Party_Attrib_Model(models.Model):
     id = models.AutoField(primary_key=True)

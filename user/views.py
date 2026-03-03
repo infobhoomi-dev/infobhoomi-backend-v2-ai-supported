@@ -1024,22 +1024,6 @@ class TestJsonView(ListCreateAPIView):
     pagination_class = PageNumberPagination
 
 
-class Test_Data_View(ListCreateAPIView):
-    http_method_names = ['post']
-    authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
-
-    queryset = Test_Data_Model.objects.all()
-    serializer_class = Test_Data_Serializer
-
-    def perform_create(self, serializer):
-        try:
-            serializer.save()
-        except ValidationError as e:
-            # Catch ValidationError and return a DRF-compatible response
-            raise serializers.ValidationError({"users": e.messages})
-
-
 class Test_Data_MyLayerIDs_View(APIView):
     http_method_names = ['post']
     # authentication_classes = [TokenAuthentication]
@@ -5057,15 +5041,6 @@ class LA_LS_Land_Unit_View(ListCreateAPIView):
 
     queryset = LA_LS_Land_Unit_Model.objects.all()
     serializer_class = LA_LS_Land_Unit_Serializer
-
-#________________________________________________ LA_LS_Utinet_LU View __________________________________________________________ not used
-class LA_LS_Utinet_LU_View(ListCreateAPIView):
-    http_method_names = ['post']
-    authentication_classes = [TokenAuthentication]
-    permission_classes = [IsAuthenticated]
-
-    queryset = LA_LS_Utinet_LU_Model.objects.all()
-    serializer_class = LA_LS_Utinet_LU_Serializer
 
 #________________________________________________ LA_LS_Build_Unit View _________________________________________________________ not used
 class LA_LS_Build_Unit_View(ListCreateAPIView):

@@ -104,9 +104,6 @@ class Update_User_Serializer(serializers.ModelSerializer):
         fields = '__all__'
 
 #_______________________________________________ Token Serializer ________________________________________________
-class TokenSerializer(serializers.Serializer):
-    token = serializers.CharField()  # Use a single token field for Django Token Authentication
-
 #_______________________________________________ Change password Serializer ______________________________________
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True)
@@ -478,33 +475,6 @@ class Search_Geom_Serializer(serializers.ModelSerializer):
 
 
 
-#_______________________________________________ Permission List Serializer ______________________________________
-class Permission_List_Serializer(serializers.ModelSerializer):
-    username = serializers.CharField(write_only=True)
-
-    class Meta:
-        model = Permission_List_Model
-        fields = '__all__'
-    
-    def create(self, validated_data):
-        # Extract username from validated_data
-        username = validated_data.pop('username', None)  # Remove username so it doesn't get saved in Permission_List_Model
-        
-        # Create the permission entry in Permission_List_Model
-        permission_instance = super().create(validated_data)
-        
-        # Prepare data for Activity_List_Model
-        activity_data = {
-            'permission_id': permission_instance.permission_id,
-            'permission_name': permission_instance.permission_name,
-            'username': username,
-        }
-        
-        # Create the activity entry in Activity_List_Model
-        Test_List_Model.objects.create(**activity_data)
-        
-        return permission_instance
-
 #_______________________________________________ User Roles Serializer ___________________________________________
 class User_Roles_Serializer(serializers.ModelSerializer):
     class Meta:
@@ -701,11 +671,6 @@ class SL_BA_Unit_Serializer(serializers.ModelSerializer):
         fields = '__all__'
 
 #_______________________________________________ SL Elect_LocalAuth Serializer ___________________________________
-class SL_Elect_LocalAuth_Serializer(serializers.ModelSerializer):
-    class Meta:
-        model = SL_Elect_LocalAuth_Model
-        fields = '__all__'
-
 #_______________________________________________ Assessment Ward Serializer ______________________________________
 class Assessment_Ward_Serializer(serializers.ModelSerializer):
     class Meta:
@@ -964,11 +929,6 @@ class LA_SP_Fire_Rescue_Serializer(serializers.ModelSerializer):
         fields = '__all__'
 
 #------------------------------------------------------------------------------
-class Fire_Rescue_Info_Serializer(serializers.ModelSerializer):
-    class Meta:
-        model = LA_SP_Fire_Rescue_Model
-        fields = ('issued_date', 'expired_date')
-
 #_______________________________________________ Attrib Panel Image Serializer ___________________________________
 class Attrib_Image_Serializer(serializers.ModelSerializer):
     class Meta:
@@ -1025,12 +985,6 @@ class Org_Area_Serializer(serializers.ModelSerializer):
         fields = '__all__'
 
 #_______________________________________________ Last Active Serializer __________________________________________
-class Last_Active_Serializer(serializers.ModelSerializer):
-    class Meta:
-        model = Last_Active_Model
-        fields = '__all__'
-
-
 #_______________________________________________ Import Vector Serializer ________________________________________
 # class Import_VectorDATA_Serializer(GeoFeatureModelSerializer):
 #     class Meta:
