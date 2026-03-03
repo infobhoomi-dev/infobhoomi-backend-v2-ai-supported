@@ -1921,12 +1921,13 @@ class Survey_Rep_DATA_Save_View(APIView):
 
                     # Check gnd_id only for Polygon or MultiPolygon
                     if geom_type in ["polygon", "multipolygon"]:
+                        layer_id_val = item.get("properties", {}).get("layer_id")
+                        is_land_parcel = layer_id_val in [1, 6]
                         gndID = item.get("properties", {}).get("gnd_id")
                         if not gndID:
-                            # gnd_id missing (e.g. imported shapefile or new building) — auto-detect via PostGIS
+                            # gnd_id missing — auto-detect via PostGIS spatial intersection
                             geom_json = item.get("geometry")
                             geom_obj = GEOSGeometry(json.dumps(geom_json), srid=4326)
-                            feature_uuid = item.get("properties", {}).get("uuid")
                             dominant_gnd = None
                             geom_sid = transaction.savepoint()
                             try:
@@ -1940,19 +1941,23 @@ class Survey_Rep_DATA_Save_View(APIView):
                                 dominant_gnd = intersecting_gnds.first()
                                 transaction.savepoint_commit(geom_sid)
                             except Exception:
-                                # sl_gnd_10m table has no geom column — roll back to keep transaction valid
                                 transaction.savepoint_rollback(geom_sid)
                                 dominant_gnd = None
 
                             if not dominant_gnd:
-                                # Geometry falls outside all GND boundaries (or geom column missing) — save without GND
-                                item["properties"]["gnd_id"] = None
+                                if is_land_parcel:
+                                    raise ValueError("Cannot save land parcel: geometry does not fall within any GND boundary.")
+                                else:
+                                    item["properties"]["gnd_id"] = None
                             else:
                                 # Validate detected GND is within the org's allowed area
                                 org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
                                 if org_area_obj and org_area_obj.org_area and org_area_obj.org_area != [0]:
                                     if dominant_gnd.gid not in org_area_obj.org_area:
-                                        item["properties"]["gnd_id"] = None
+                                        if is_land_parcel:
+                                            raise ValueError("Cannot save land parcel: geometry falls outside your organisation's allowed GND area.")
+                                        else:
+                                            item["properties"]["gnd_id"] = None
                                     else:
                                         item["properties"]["gnd_id"] = dominant_gnd.gid
                                 else:
