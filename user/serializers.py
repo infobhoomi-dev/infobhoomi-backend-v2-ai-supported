@@ -594,11 +594,6 @@ class Party_Update_Serializer(serializers.ModelSerializer):
                   'email',
                   'date_of_birth',
                   'gender',
-                  'edu',
-                  'religion',
-                  'race',
-                  'married_status',
-                  'health_status',
                   'other_reg',
                   'remark']
 
@@ -819,7 +814,7 @@ class SL_Organization_Serializer(serializers.ModelSerializer):
         model = SL_Organization_Model
         fields = [
             "org_id", "display_name", "permit_start_date", "permit_end_date",
-            "org_parent_type", "org_group_type", "org_level", "org_overview",
+            "org_level",
             "director", "contact_no", "org_email", "org_address",
             "subscription_plan", "users_limit", "status",
             "org_loc", "org_area"

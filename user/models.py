@@ -552,7 +552,6 @@ class Survey_Rep_DATA_Model(gismodels.Model):
 
     user_id = models.IntegerField(null=False)
     layer_id = models.IntegerField(null=False)
-    infobhoomi_id = models.CharField(max_length=255, null=True)
     geom_type = models.CharField(max_length=255, null=False)
     area = models.DecimalField(max_digits=20, decimal_places=4, null=True)
     dimension_2d_3d = models.CharField(max_length=50, null=False, default='2D')
@@ -561,23 +560,17 @@ class Survey_Rep_DATA_Model(gismodels.Model):
 
     status = models.BooleanField(null=False, default=True)
     parent_id = ArrayField(models.IntegerField(), null=True)
-    ref_id = models.IntegerField(null=True)
+    ref_id = models.IntegerField(null=True, db_column='ref_ids')
 
     date_created = models.DateTimeField(auto_now_add=True)
     date_modified = models.DateTimeField(null=True)
-
-    original_point_id = models.CharField(max_length=10, null=True)
-    original_x_coord = models.DecimalField(max_digits=20, decimal_places=10, null = True)
-    original_y_coord = models.DecimalField(max_digits=20, decimal_places=10, null = True)
-    original_z_coord = models.DecimalField(max_digits=20, decimal_places=10, null = True)
-    original_code = models.CharField(max_length=10, null=True)
 
     gnd_id = models.IntegerField(null=True)
     org_id = models.IntegerField(null=False)
 
     class Meta:
         managed = True
-        db_table = 'survey_rep' 
+        db_table = 'survey_rep'
 
 #_______________________________________________ Survey_Rep_Geom_History data Model _____________________________________________
 class Survey_Rep_Geom_History_Model(gismodels.Model):
@@ -687,11 +680,6 @@ class Party_Model(models.Model):
     email = models.EmailField(max_length=255, null=True, unique=True)
     date_of_birth = models.DateField(null=True)
     gender = models.CharField(max_length=15, null=True)
-    edu = models.CharField(max_length=20, null=True)
-    religion = models.CharField(max_length=15, null=True)
-    race = models.CharField(max_length=15, null=True)
-    married_status = models.CharField(max_length=15, null=True)
-    health_status = models.CharField(max_length=50, null=True)
     other_reg = ArrayField(models.CharField(max_length=50), null=True)
     remark = models.TextField(null=True)
 
@@ -749,7 +737,6 @@ class SL_BA_Unit_Model(models.Model):
     sl_ba_unit_name = models.TextField(null=False)
 
     status = models.BooleanField(null=False, default=True)
-    remark = models.CharField(max_length=255, null=True)
 
     org_id = models.IntegerField(null=False, default=1)
     role_type = models.CharField(max_length=50, null=False, default='user')
@@ -876,31 +863,16 @@ class LA_Spatial_Unit_Model(models.Model):
     su_id = models.IntegerField(null=False, unique=True)
 
     status = models.BooleanField(null=False, default=True)
-    reference_id = models.IntegerField(null=True)
-    ladm_value = models.CharField(max_length=30, null=True)
     label = models.CharField(max_length=255, null=True)
-    util_obj_id = models.IntegerField(null=True)
-    util_obj_code = models.CharField(max_length=20, null=True)
-
-    # LADM ISO 19152 – LA_SpatialUnit.level
-    level = models.ForeignKey(
-        'LA_Level_Model', on_delete=models.SET_NULL, null=True, db_column='level_id'
-    )
-
-    # LADM ISO 19152 – parcel registration status (ACTIVE/PENDING/SUSPENDED/HISTORIC)
-    parcel_status = models.CharField(max_length=20, null=True)
 
     class Meta:
             managed = True
-            constraints = [UniqueConstraint(fields=['util_obj_id', 'util_obj_code'], name='util_obj_id_util_obj_code')]
             db_table = 'la_spatial_unit'
 
 #_______________________________________________ LA_LS_Land_Unit Model __________________________________________________________
 class LA_LS_Land_Unit_Model(models.Model):
     id = models.AutoField(primary_key=True)
-
     su_id = models.OneToOneField('LA_Spatial_Unit_Model', on_delete=models.CASCADE, db_column='su_id', to_field='su_id')
-
     access_road = models.CharField(max_length=255, null=True)
     postal_ad_lnd = models.CharField(max_length=255, null=True)
     local_auth = models.CharField(max_length=255, null=True, blank=True)
@@ -912,10 +884,7 @@ class LA_LS_Land_Unit_Model(models.Model):
 
     # LADM ISO 19152 – LA_SpatialUnit spatial geometry attributes
     area = models.DecimalField(max_digits=15, decimal_places=4, null=True)
-    perimeter = models.DecimalField(max_digits=15, decimal_places=4, null=True)
     dimension_2d_3d = models.CharField(max_length=3, null=True)
-    boundary_type = models.CharField(max_length=20, null=True)
-    crs = models.CharField(max_length=50, null=True)
 
     status = models.BooleanField(null=False, default=True)
 
@@ -1313,11 +1282,7 @@ class SL_Organization_Model(models.Model):
     display_name = models.CharField(max_length=255, null=True)
     permit_start_date = models.DateField(null=True)
     permit_end_date = models.DateField(null=True)
-    org_parent_type = models.CharField(max_length=100, null=True)
-    org_group_type = models.CharField(max_length=100, null=True)
-    
     org_level = models.IntegerField(null=False, default='0')
-    org_overview = models.TextField(null=True)
 
     director = models.CharField(max_length=100, null=True)
     contact_no = models.CharField(max_length=50, null=True)
@@ -1422,12 +1387,9 @@ class LA_Spatial_Source_Model(models.Model):
 
     approval_status = models.BooleanField(null=False, default=True)
     date_accept = models.DateField(null=True)
-    date_expire = models.DateField(null=True)
-
     file_path = models.FileField(upload_to='documents/spatial_source', null=False)
 
     surveyor_name = models.CharField(max_length=255, null=True)
-    surveyor_tp = models.CharField(max_length=15, null=True)
 
     status = models.BooleanField(null=False, default=True)
     date_created = models.DateTimeField(auto_now_add=True)
@@ -1442,7 +1404,6 @@ class Assessment_Model(models.Model):
     external_ass_id = models.CharField(max_length=255, null=True)
     assessment_no = models.CharField(max_length=10, null=True)
     ass_road = models.CharField(max_length=255, null=True)
-    ass_div = models.IntegerField(null=True)
     assessment_annual_value = models.DecimalField(max_digits=15, decimal_places=2, null=False, default=0.00)
     assessment_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=False, default=0.00)
     date_of_valuation = models.DateField(null=True)
@@ -1455,6 +1416,7 @@ class Assessment_Model(models.Model):
     tax_status      = models.CharField(max_length=10, null=True)  # paid / pending / overdue
 
     su_id = models.ForeignKey('LA_Spatial_Unit_Model', on_delete=models.CASCADE, db_column='su_id', to_field='su_id')
+    user_id = models.IntegerField(null=True)
 
     class Meta:
                 managed = True
@@ -1463,16 +1425,12 @@ class Assessment_Model(models.Model):
 #_______________________________________________ Tax_Info Model _________________________________________________________________
 class Tax_Info_Model(models.Model):
     id = models.AutoField(primary_key=True)
-    external_tax_id = models.CharField(max_length=255, null=True)
-    tax_no = models.CharField(max_length=50, null=True)
+
     tax_annual_value = models.DecimalField(max_digits=15, decimal_places=2, null=False, default=0.00)
     tax_percentage = models.DecimalField(max_digits=5, decimal_places=2, null=False, default=0.00)
     date_valuation = models.DateTimeField(null=True)
     tax_date = models.DateField(null=True)
     tax_type = models.CharField(max_length=255, null=True)
-    tax_name = models.CharField(max_length=255, null=True)
-    tax_out_balance = models.DecimalField(max_digits=15, decimal_places=2, null=True)
-    
     su_id = models.ForeignKey('LA_Spatial_Unit_Model', on_delete=models.CASCADE, db_column='su_id', to_field='su_id')
 
     class Meta:
@@ -1486,9 +1444,6 @@ class LA_SP_Fire_Rescue_Model(models.Model):
     su_id = models.ForeignKey('LA_Spatial_Unit_Model', on_delete=models.CASCADE, db_column='su_id', to_field='su_id')
 
     description = models.TextField(null=True)
-    officer = models.CharField(max_length=255, null=True)
-    issued_date = models.DateField(null=True)
-    expired_date = models.DateField(null=True)
 
     class Meta:
                 managed = True
