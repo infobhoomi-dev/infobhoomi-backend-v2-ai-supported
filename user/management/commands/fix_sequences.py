@@ -14,6 +14,8 @@ from django.db import connection
 # Format: (table_name, pk_column)
 SEQUENCES = [
     ("survey_rep",              "id"),
+    ("survey_rep_geom_history", "id"),
+    ("survey_rep_func_history", "id"),
     ("la_spatial_unit",         "id"),
     ("la_ls_land_unit",         "id"),
     ("la_ls_build_unit",        "id"),

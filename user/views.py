@@ -1835,17 +1835,20 @@ class Survey_Rep_DATA_Save_View(APIView):
 
     def post(self, request):
 
+        import logging
+        logger = logging.getLogger('survey_rep_save')
+
         data = request.data
         user = request.user
         user_id = user.id
+
+        logger.debug(f"[SAVE] ── New save request from user_id={user_id}, feature_count={len(data) if isinstance(data, list) else 'NOT A LIST'}")
 
         user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
         if not user_roles.exists():
             return Response({"error": "User has no assigned roles."}, status=403)
 
         role_id = user_roles.values_list('role_id', flat=True).first()
-        
-        # print("Received GeoJSON Data:",json.dumps(data, indent=4))
 
         if not isinstance(data, list):
             return Response({"Expected a list of GEOM DATA"}, status=400)
@@ -1856,6 +1859,14 @@ class Survey_Rep_DATA_Save_View(APIView):
 
         with transaction.atomic():
             for index, item in enumerate(data):
+                _props = item.get("properties", {})
+                _geom  = item.get("geometry", {})
+                logger.debug(
+                    f"[SAVE] [{index}] uuid={_props.get('uuid')} | layer_id={_props.get('layer_id')} "
+                    f"| geom_type={_geom.get('type')} | area={_props.get('area')} "
+                    f"| gnd_id={_props.get('gnd_id')} | parent_uuid={_props.get('parent_uuid')} "
+                    f"| feature_Id={_props.get('feature_Id')} | isUpdateOnly={_props.get('isUpdateOnly')}"
+                )
                 try:
                   with transaction.atomic():
                      # Step 1: Check if user has save/edit permission
@@ -1913,13 +1924,19 @@ class Survey_Rep_DATA_Save_View(APIView):
                             geom_obj = GEOSGeometry(json.dumps(geom_json), srid=4326)
                             # Get all intersecting GNDs ordered by intersection area (largest first — dominant GND)
                             try:
-                                intersecting_gnds = (
-                                    sl_gnd_10m_Model.objects
-                                    .filter(geom__intersects=geom_obj)
-                                    .annotate(inter_area=Area(GeoIntersection('geom', geom_obj)))
-                                    .order_by('-inter_area')
-                                )
-                                dominant_gnd = intersecting_gnds.first()
+                                # Wrap in its own savepoint so a DB error (e.g. missing
+                                # geom column on sl_gnd_10m) is rolled back before we
+                                # continue — otherwise PostgreSQL leaves the connection in
+                                # an ABORTED state and all subsequent queries fail with
+                                # "current transaction is aborted".
+                                with transaction.atomic():
+                                    intersecting_gnds = (
+                                        sl_gnd_10m_Model.objects
+                                        .filter(geom__intersects=geom_obj)
+                                        .annotate(inter_area=Area(GeoIntersection('geom', geom_obj)))
+                                        .order_by('-inter_area')
+                                    )
+                                    dominant_gnd = intersecting_gnds.first()
                             except Exception:
                                 # sl_gnd_10m has no geom column — skip GND validation
                                 dominant_gnd = None
@@ -1960,6 +1977,7 @@ class Survey_Rep_DATA_Save_View(APIView):
                     # Update status for parent_ids if they exist
                     if parent_ids:
                         Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids).update(status=False)
+                        logger.debug(f"[SAVE] [{index}] Parent IDs set to status=False: {parent_ids}")
 
                     serializer = self.serializer_class(data=item)
                     if serializer.is_valid():
@@ -1968,6 +1986,7 @@ class Survey_Rep_DATA_Save_View(APIView):
                         survey_rep = serializer.save()
                         survey_rep.su_id_id = survey_rep.id
                         survey_rep.save()
+                        logger.debug(f"[SAVE] [{index}] Saved survey_rep id={survey_rep.id} uuid={survey_rep.uuid} status={survey_rep.status} gnd_id={survey_rep.gnd_id} layer_id={survey_rep.layer_id}")
 
                         # Create record to Survey_Rep_Geom_History_Model
                         Survey_Rep_Geom_History_Model.objects.create(
@@ -2030,8 +2049,10 @@ class Survey_Rep_DATA_Save_View(APIView):
                         saved_records.append(serializer.data)
 
                     else:
+                        logger.debug(f"[SAVE] [{index}] Serializer validation FAILED: {serializer.errors}")
                         errors.append({"index": index, "errors": serializer.errors})
                 except Exception as e:
+                        logger.debug(f"[SAVE] [{index}] Exception during save: {e}", exc_info=True)
                         errors.append({"index": index, "detail": str(e)})
 
         # Return the response with saved records and errors
@@ -2041,6 +2062,7 @@ class Survey_Rep_DATA_Save_View(APIView):
             "warnings": warnings,
         }
 
+        logger.debug(f"[SAVE] ── Done: saved={len(saved_records)} errors={len(errors)}")
         if saved_records:
             return Response(response_data, status=status.HTTP_201_CREATED)
         else:
@@ -2066,10 +2088,14 @@ class Survey_Rep_DATA_Filter_User_View(APIView):
         ).values_list('layer_id', flat=True)
 
         # Use the retrieved layer_ids to filter Survey_Rep_DATA_Model
+        # Exclude null-geometry records — these are legacy LADM records imported
+        # without spatial data.  Sending them to the frontend causes console spam
+        # and wastes bandwidth since they can never be rendered.
         geom_data = Survey_Rep_DATA_Model.objects.filter(
             layer_id__in=layers,
             status=True,
-            org_id=org_id
+            org_id=org_id,
+            geom__isnull=False,
         )
 
         # Serialize geom data
@@ -3380,8 +3406,9 @@ class Lnd_Summary_View(ListCreateAPIView):
             if assessment_unit:
                 assessment_unit_data["assessment_no"] = assessment_unit.assessment_no
 
-                if assessment_unit.ass_div:
-                    ward = Assessment_Ward_Model.objects.filter(id=assessment_unit.ass_div).first()
+                ass_div = getattr(assessment_unit, 'ass_div', None)
+                if ass_div:
+                    ward = Assessment_Ward_Model.objects.filter(id=ass_div).first()
                     if ward:
                         assessment_unit_data["assessment_div"] = ward.ward_name
 
@@ -3482,11 +3509,12 @@ class Lnd_Admin_Info_View(ListCreateAPIView):
                 "eletorate": elect_data["eletorate"] if elect_data else None,
                 "local_auth": (land_unit.local_auth if (land_unit and land_unit.local_auth) else (elect_data["local_auth"] if elect_data else None)),
                 "sl_land_type": land_unit.sl_land_type if land_unit else None,
+                "tenure_type": land_unit.tenure_type if land_unit else None,
                 "access_road": land_unit.access_road if land_unit else None,
                 "postal_ad_lnd": land_unit.postal_ad_lnd if land_unit else None,
                 "land_name": land_unit.land_name if land_unit else None,
                 "registration_date": str(land_unit.registration_date) if land_unit and land_unit.registration_date else None,
-                "ass_div": assessment_unit.ass_div if assessment_unit else None,
+                "ass_div": getattr(assessment_unit, 'ass_div', None) if assessment_unit else None,
                 "administrative_type": "None"
             }
 
@@ -3496,7 +3524,13 @@ class Lnd_Admin_Info_View(ListCreateAPIView):
             # Always return these fields regardless of role permissions
             response_data["registration_date"] = all_data.get("registration_date")
             response_data["local_auth"] = all_data.get("local_auth")
+            response_data["tenure_type"] = all_data.get("tenure_type")
             response_data["parcel_status"] = spatial_unit.parcel_status if spatial_unit else None
+            # Relationship fields — always returned
+            response_data["adjacent_parcels"] = land_unit.adjacent_parcels if land_unit else None
+            response_data["parent_parcel"] = land_unit.parent_parcel if land_unit else None
+            response_data["child_parcels"] = land_unit.child_parcels if land_unit else None
+            response_data["part_of_estate"] = land_unit.part_of_estate if land_unit else None
             # GND-derived administrative hierarchy — always returned, always read-only
             response_data["gnd_id"] = gnd_id
             response_data["gnd"] = gnd_data["gnd"] if gnd_data else None
@@ -3561,13 +3595,19 @@ class Lnd_Admin_Info_Update_View(APIView):
             else:
                 land_unit = None
             if land_unit:
-                lu_fields = ["sl_land_type", "access_road", "postal_ad_lnd", "land_name", "local_auth"]
+                lu_fields = ["sl_land_type", "tenure_type", "access_road", "postal_ad_lnd", "land_name", "local_auth"]
                 lu_data = {f: filtered_data[f] for f in lu_fields if f in filtered_data}
+                # Relationship fields — always allowed regardless of role permissions
+                for rel_field in ["adjacent_parcels", "parent_parcel", "child_parcels", "part_of_estate"]:
+                    if rel_field in request.data:
+                        lu_data[rel_field] = request.data[rel_field] or None
                 # Always allow registration_date and local_auth regardless of role permissions
                 if "registration_date" in request.data and request.data["registration_date"]:
                     lu_data["registration_date"] = request.data["registration_date"]
                 if "local_auth" in request.data:
                     lu_data["local_auth"] = request.data["local_auth"] or None
+                if "tenure_type" in request.data:
+                    lu_data["tenure_type"] = request.data["tenure_type"] or None
                 if lu_data:
                     original_data = land_unit.__dict__.copy()
                     serializer = LA_LS_Land_Unit_Serializer(land_unit, data=lu_data, partial=True)
@@ -3611,7 +3651,7 @@ class Lnd_Admin_Info_Update_View(APIView):
             if old_value != new_value:
                 changes.append(History_Spartialunit_Attrib_Model(
                     user_id=user_id,
-                    su_id=su_id,
+                    su_id_id=su_id,
                     category=category,
                     field_name=field,
                     field_value=new_value
@@ -3785,7 +3825,7 @@ class Lnd_Overview_Update_View(APIView):
                 changes.append(
                     History_Spartialunit_Attrib_Model(
                         user_id=user_id,
-                        su_id=su_id,
+                        su_id_id=su_id,
                         category=category,
                         field_name=field,
                         field_value=new_value
@@ -4259,8 +4299,9 @@ class Bld_Summary_View(ListCreateAPIView):
             assessment_unit = Assessment_Model.objects.filter(su_id=su_id).first()
             if assessment_unit:
                 ward_name = None
-                if assessment_unit.ass_div:
-                    ward = Assessment_Ward_Model.objects.filter(id=assessment_unit.ass_div).first()
+                ass_div = getattr(assessment_unit, 'ass_div', None)
+                if ass_div:
+                    ward = Assessment_Ward_Model.objects.filter(id=ass_div).first()
                     ward_name = ward.ward_name if ward else None
                 assessment_unit_data = {
                     "assessment_div": ward_name,
@@ -4361,7 +4402,7 @@ class Bld_Admin_Info_View(ListCreateAPIView):
             # Step 7: Assessment
             assessment_unit = Assessment_Model.objects.filter(su_id=su_id).first()
             assessment_unit_data = {
-                "ass_div": assessment_unit.ass_div if assessment_unit else None,
+                "ass_div": getattr(assessment_unit, 'ass_div', None) if assessment_unit else None,
             }
 
             # Step 8: Static field
@@ -5585,14 +5626,13 @@ class RRR_Data_Save_View(APIView):
                 su_id_id=data['su_id'],
                 sl_ba_unit_name=data['sl_ba_unit_name'],
                 sl_ba_unit_type=data['sl_ba_unit_type'],
-                org_id=user_obj.org_id,
-                role_type=user_obj.user_type or 'user',
             )
 
             # 2️⃣ Create Admin Source (file later)
             admin_source = LA_Admin_Source_Model.objects.create(
                 admin_source_type=data['admin_source_type'],
                 done_by=user_id,
+                user_id=user_id,
                 file_path=None
             )
 
@@ -5670,6 +5710,7 @@ class RRR_Add_Document_View(APIView):
         admin_source = LA_Admin_Source_Model.objects.create(
             admin_source_type=admin_source_type,
             done_by=request.user.id,
+            user_id=request.user.id,
             file_path=None,
         )
 
@@ -5765,6 +5806,40 @@ class RRR_Data_get_View(APIView):
                             "doc_link_id": None,  # primary doc has no link id
                         })
 
+                    # Build rrr_list entry here (inside for rrr loop, NOT inside for doc_link loop)
+                    party_role = Party_Roles_Model.objects.filter(rrr_id=rrr).first()
+                    party_role_type = party_role.party_role_type if party_role else None
+
+                    restrictions = LA_RRR_Restriction_Model.objects.filter(rrr_id=rrr).values(
+                        'id', 'rrr_restriction_type', 'description', 'time_begin', 'time_end'
+                    )
+                    responsibilities = LA_RRR_Responsibility_Model.objects.filter(rrr_id=rrr).values(
+                        'id', 'rrr_responsibility_type', 'description', 'time_begin', 'time_end'
+                    )
+
+                    rrr_list.append({
+                        "rrr_id": rrr.rrr_id,
+                        "pid": rrr.pid_id,
+                        "party_name": rrr.pid.party_full_name if rrr.pid else None,
+                        "share_type": party_role.share_type if party_role else None,
+                        "share": float(party_role.share) if party_role and party_role.share is not None else None,
+                        "party_role_type": party_role_type,
+                        "rrr_type": rrr.rrr_type,
+                        "time_begin": str(rrr.time_begin) if rrr.time_begin else None,
+                        "time_end": str(rrr.time_end) if rrr.time_end else None,
+                        "description": rrr.description,
+                        "restrictions": [
+                            {**r, "time_begin": str(r["time_begin"]) if r["time_begin"] else None,
+                                  "time_end": str(r["time_end"]) if r["time_end"] else None}
+                            for r in restrictions
+                        ],
+                        "responsibilities": [
+                            {**r, "time_begin": str(r["time_begin"]) if r["time_begin"] else None,
+                                  "time_end": str(r["time_end"]) if r["time_end"] else None}
+                            for r in responsibilities
+                        ],
+                    })
+
                 # Additional docs (from LA_RRR_Document_Model linked to this BA unit)
                 for doc_link in LA_RRR_Document_Model.objects.filter(ba_unit=ba_unit).select_related('admin_source'):
                     as2 = doc_link.admin_source
@@ -5779,22 +5854,6 @@ class RRR_Data_get_View(APIView):
                             "file_url": file_url2,
                             "doc_link_id": doc_link.id,
                         })
-
-                    party_role = Party_Roles_Model.objects.filter(rrr_id=rrr).first()
-                    party_role_type = party_role.party_role_type if party_role else None
-
-                    rrr_list.append({
-                        "rrr_id": rrr.rrr_id,
-                        "pid": rrr.pid_id,
-                        "party_name": rrr.pid.party_name if rrr.pid else None,
-                        "share_type": party_role.share_type if party_role else None,
-                        "share": float(party_role.share) if party_role and party_role.share is not None else None,
-                        "party_role_type": party_role_type,
-                        "rrr_type": rrr.rrr_type,
-                        "time_begin": str(rrr.time_begin) if rrr.time_begin else None,
-                        "time_end": str(rrr.time_end) if rrr.time_end else None,
-                        "description": rrr.description,
-                    })
 
                 response_data.append({
                     "ba_unit_id": ba_unit.ba_unit_id,
@@ -5835,6 +5894,94 @@ class SL_BA_Unit_Update_View(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+#________________________________________________ RRR Update View (PATCH existing entry) _______________________________________
+class RRR_Update_View(APIView):
+    """PATCH /api/user/rrr/update/<ba_unit_id>/
+    Updates an existing LADM RRR entry:
+      - SL_BA_Unit_Model (name, type)
+      - LA_RRR_Model (time_begin, time_end, description, rrr_type)
+      - Party_Roles_Model (share, share_type, party_role_type)
+      - LA_Admin_Source_Model (admin_source_type; optional file replacement)
+    """
+    http_method_names = ['patch']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request, ba_unit_id):
+        try:
+            ba_unit = SL_BA_Unit_Model.objects.get(ba_unit_id=ba_unit_id)
+        except SL_BA_Unit_Model.DoesNotExist:
+            return Response({"error": "BA Unit not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+
+        # --- Update BA Unit ---
+        ba_fields = {}
+        if 'sl_ba_unit_name' in data:
+            ba_fields['sl_ba_unit_name'] = data['sl_ba_unit_name']
+        if 'sl_ba_unit_type' in data:
+            ba_fields['sl_ba_unit_type'] = data['sl_ba_unit_type']
+        if ba_fields:
+            for k, v in ba_fields.items():
+                setattr(ba_unit, k, v)
+            ba_unit.save()
+
+        # --- Update primary RRR record ---
+        rrr = LA_RRR_Model.objects.filter(ba_unit_id=ba_unit).first()
+        if rrr:
+            rrr_fields = {}
+            if 'time_begin' in data:
+                rrr_fields['time_begin'] = data['time_begin'] or None
+            if 'time_end' in data:
+                rrr_fields['time_end'] = data['time_end'] or None
+            if 'description' in data:
+                rrr_fields['description'] = data['description'] or None
+            if 'rrr_type' in data:
+                rrr_fields['rrr_type'] = data['rrr_type']
+            if rrr_fields:
+                for k, v in rrr_fields.items():
+                    setattr(rrr, k, v)
+                rrr.save()
+
+            # --- Update party role ---
+            party_role = Party_Roles_Model.objects.filter(rrr_id=rrr).first()
+            if party_role:
+                pr_fields = {}
+                if 'share' in data:
+                    pr_fields['share'] = data['share']
+                if 'share_type' in data:
+                    pr_fields['share_type'] = data['share_type']
+                if 'party_role_type' in data:
+                    pr_fields['party_role_type'] = data['party_role_type']
+                if pr_fields:
+                    for k, v in pr_fields.items():
+                        setattr(party_role, k, v)
+                    party_role.save()
+
+            # --- Update admin source type / replace file ---
+            admin_source = rrr.admin_source_id
+            if admin_source:
+                if 'admin_source_type' in data:
+                    admin_source.admin_source_type = data['admin_source_type']
+                    admin_source.save()
+
+                file = request.FILES.get('file')
+                if file:
+                    if admin_source.file_path:
+                        try:
+                            default_storage.delete(admin_source.file_path.name)
+                        except Exception:
+                            pass
+                    folder_path = 'documents/admin_source'
+                    new_filename = f"{admin_source.admin_source_id}.pdf"
+                    saved_path = default_storage.save(
+                        os.path.join(folder_path, new_filename), ContentFile(file.read())
+                    )
+                    admin_source.file_path = saved_path
+                    admin_source.save()
+
+        return Response({"message": "RRR entry updated successfully"}, status=status.HTTP_200_OK)
 
 
 

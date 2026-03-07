@@ -738,9 +738,6 @@ class SL_BA_Unit_Model(models.Model):
 
     status = models.BooleanField(null=False, default=True)
 
-    org_id = models.IntegerField(null=False, default=1)
-    role_type = models.CharField(max_length=50, null=False, default='user')
-
     class Meta:
             managed = True
             db_table = 'sl_ba_unit'
@@ -750,7 +747,8 @@ class LA_Admin_Source_Model(models.Model):
     admin_source_id = models.AutoField(primary_key=True)
     admin_source_type = models.CharField(max_length=255, null=False)
 
-    done_by = models.IntegerField(null=False)
+    done_by = models.IntegerField(null=True)
+    user_id = models.IntegerField(null=False)
     file_path = models.FileField(upload_to='documents/admin_source', null=True)
 
     status = models.BooleanField(null=False, default=True)
@@ -864,6 +862,7 @@ class LA_Spatial_Unit_Model(models.Model):
 
     status = models.BooleanField(null=False, default=True)
     label = models.CharField(max_length=255, null=True)
+    parcel_status = models.CharField(max_length=30, null=True)
 
     class Meta:
             managed = True
@@ -882,9 +881,20 @@ class LA_LS_Land_Unit_Model(models.Model):
     land_name = models.CharField(max_length=255, null=True)
     registration_date = models.DateField(null=True)
 
+    tenure_type = models.CharField(max_length=30, null=True)
+
+    # Parcel relationship fields
+    adjacent_parcels = models.CharField(max_length=500, null=True)
+    parent_parcel = models.CharField(max_length=100, null=True)
+    child_parcels = models.CharField(max_length=500, null=True)
+    part_of_estate = models.CharField(max_length=255, null=True)
+
     # LADM ISO 19152 – LA_SpatialUnit spatial geometry attributes
     area = models.DecimalField(max_digits=15, decimal_places=4, null=True)
+    perimeter = models.DecimalField(max_digits=15, decimal_places=4, null=True)
     dimension_2d_3d = models.CharField(max_length=3, null=True)
+    boundary_type = models.CharField(max_length=30, null=True)
+    crs = models.CharField(max_length=20, null=True)
 
     status = models.BooleanField(null=False, default=True)
 

@@ -317,6 +317,7 @@ urlpatterns = [
     path('rrr_data_get/', RRR_Data_get_View.as_view()), # Get API (ex: /rrr_data_get/?su_id=50)
 
     path('ba_unit/update/<int:ba_unit_id>/', SL_BA_Unit_Update_View.as_view()), # for Delete RRR record "status = False"
+    path('rrr/update/<int:ba_unit_id>/', RRR_Update_View.as_view()),  # PATCH existing RRR entry
 
     path('admin-source/file/<int:admin_source_id>/', DownloadAdminSourcePDF.as_view(), name='download_admin_pdf'),
     path('admin-source/update/<int:admin_source_id>/', AdminSourceUpdateView.as_view()),
