@@ -1,0 +1,730 @@
+from rest_framework.views import APIView
+from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveAPIView, RetrieveUpdateDestroyAPIView, RetrieveUpdateAPIView
+from rest_framework import generics, status
+from rest_framework.response import Response
+from rest_framework.authtoken.models import Token
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.pagination import PageNumberPagination
+
+from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth.hashers import check_password
+from django.db.models import Q, Min, Subquery, OuterRef
+from django.db import transaction, IntegrityError
+from django.core.exceptions import ValidationError, PermissionDenied
+from django.utils.timezone import now
+from django.utils import timezone
+from django.http import FileResponse, Http404
+from django.shortcuts import get_object_or_404
+from django.conf import settings
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from django.contrib.gis.geos import GEOSGeometry
+from django.contrib.gis.db.models.functions import Area, Intersection as GeoIntersection
+
+import json, os, time
+from datetime import timedelta
+
+from ..models import *
+from ..serializers import *
+from ..constant import *
+from ..tests import *
+
+User = get_user_model()
+
+#________________________________________________ Survey Rep DATA View __________________________________________________________
+class Survey_Rep_DATA_Save_View(APIView):
+    http_method_names = ['post']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    serializer_class = Survey_Rep_DATA_Serializer
+
+    def post(self, request):
+
+        import logging
+        logger = logging.getLogger('survey_rep_save')
+
+        _t_start = time.perf_counter()
+        data = request.data
+        user = request.user
+        user_id = user.id
+
+        logger.debug(f"[SAVE⏱] ── New save request from user_id={user_id}, feature_count={len(data) if isinstance(data, list) else 'NOT A LIST'}")
+
+        _t = time.perf_counter()
+        user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
+        if not user_roles.exists():
+            return Response({"error": "User has no assigned roles."}, status=403)
+        role_id = user_roles.values_list('role_id', flat=True).first()
+        logger.debug(f"[SAVE⏱] Role lookup: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+        if not isinstance(data, list):
+            return Response({"Expected a list of GEOM DATA"}, status=400)
+
+        # --- Hoist per-request queries outside the loop ---
+        _t = time.perf_counter()
+        permission_id = 201
+        has_add_permission = Role_Permission_Model.objects.filter(
+            role_id=role_id, permission_id=permission_id, add=True
+        ).exists()
+        has_edit_permission = Role_Permission_Model.objects.filter(
+            role_id=role_id, permission_id=permission_id, edit=True
+        ).exists()
+        logger.debug(f"[SAVE⏱] Permission checks: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+        _t = time.perf_counter()
+        my_layerIDs = set(
+            LayersModel.objects.filter(group_name__contains=[user_id]).values_list('layer_id', flat=True)
+        )
+        logger.debug(f"[SAVE⏱] Layer IDs fetch: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+        _t = time.perf_counter()
+        org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
+        logger.debug(f"[SAVE⏱] Org area fetch: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+        saved_records = []
+        errors = []
+        warnings = []
+
+        with transaction.atomic():
+            for index, item in enumerate(data):
+                _props = item.get("properties", {})
+                _geom  = item.get("geometry", {})
+                logger.debug(
+                    f"[SAVE] [{index}] uuid={_props.get('uuid')} | layer_id={_props.get('layer_id')} "
+                    f"| geom_type={_geom.get('type')} | calculated_area={_props.get('calculated_area')} "
+                    f"| gnd_id={_props.get('gnd_id')} | parent_uuid={_props.get('parent_uuid')} "
+                    f"| feature_Id={_props.get('feature_Id')} | isUpdateOnly={_props.get('isUpdateOnly')}"
+                )
+                try:
+                  _t_feat = time.perf_counter()
+                  with transaction.atomic():
+                    # Step 1: Check if user has save/edit permission
+                    parent_uuid = item.get("properties", {}).get("parent_uuid", [])
+
+                    if not parent_uuid:  # parent_uuid is null or empty → ADD permission
+                        if not has_add_permission:
+                            return Response({"error": "You do not have add permission."}, status=403)
+                    else:  # parent_uuid exists → EDIT permission
+                        if not has_edit_permission:
+                            return Response({"error": "You do not have edit permission."}, status=403)
+
+                    item.setdefault("properties", {})["user_id"] = user.id
+                    item["properties"]["org_id"] = user.org_id
+
+                    # Extract geom_type for save it to geom_type field
+                    geom_type = item.get("geometry", {}).get("type", None)
+                    if not geom_type:
+                        raise ValueError("The 'geometry.type' field is required")
+
+                    geom_type = geom_type.lower()
+                    item["properties"]["geom_type"] = geom_type
+
+                    _t = time.perf_counter()
+                    # Parse geometry once — reused for both area calculation and GND detection
+                    _geom_json = item.get("geometry")
+                    _crs = item.get("properties", {}).get("crs", "EPSG:4326")
+                    try:
+                        _srid = int(_crs.split(":")[-1]) if _crs else 4326
+                    except (ValueError, AttributeError):
+                        _srid = 4326
+                    # Parse in WGS84 first (needed for spatial queries); keep a reference for GND detection
+                    _geom_obj_4326 = GEOSGeometry(json.dumps(_geom_json), srid=_srid if _srid == 4326 else 4326)
+                    _geom_obj = _geom_obj_4326.transform(5235, clone=True) if _srid in [4326, 4269, 4230] else GEOSGeometry(json.dumps(_geom_json), srid=_srid)
+                    if geom_type in ["polygon", "multipolygon"]:
+                        item["properties"]["calculated_area"] = round(_geom_obj.area, 4)
+                    elif geom_type in ["linestring", "multilinestring"]:
+                        item["properties"]["calculated_area"] = round(_geom_obj.length, 4)
+                    else:
+                        item["properties"]["calculated_area"] = 0
+                    logger.debug(f"[SAVE⏱]   Geometry parse + area calc: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+                    # Check gnd_id for all geometry types
+                    _t = time.perf_counter()
+                    if geom_type in ["polygon", "multipolygon"]:
+                        layer_id_val = item.get("properties", {}).get("layer_id")
+                        is_land_parcel = layer_id_val in [1, 6]
+                        gndID = item.get("properties", {}).get("gnd_id")
+                        if not gndID:
+                            # Reuse already-parsed geometry (no second parse)
+                            geom_obj = _geom_obj_4326
+                            dominant_gnd = None
+                            try:
+                                # Wrap in its own savepoint so a DB error (e.g. missing
+                                # geom column on sl_gnd_10m) is rolled back before we
+                                # continue — otherwise PostgreSQL leaves the connection in
+                                # an ABORTED state and all subsequent queries fail with
+                                # "current transaction is aborted".
+                                with transaction.atomic():
+                                    # Fast path: centroid point-in-polygon (uses spatial index, no geometry computation)
+                                    centroid = geom_obj.centroid
+                                    dominant_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=centroid).first()
+                                    if not dominant_gnd:
+                                        # Slow fallback: parcel straddles a GND boundary — find dominant by intersection area
+                                        dominant_gnd = (
+                                            sl_gnd_10m_Model.objects
+                                            .filter(geom__intersects=geom_obj)
+                                            .annotate(inter_area=Area(GeoIntersection('geom', geom_obj)))
+                                            .order_by('-inter_area')
+                                            .first()
+                                        )
+                            except Exception:
+                                # sl_gnd_10m has no geom column — skip GND validation
+                                dominant_gnd = None
+                                is_land_parcel = False  # allow save without GND
+
+                            if not dominant_gnd:
+                                if is_land_parcel:
+                                    raise ValueError("Cannot save land parcel: geometry does not fall within any GND boundary.")
+                                else:
+                                    item["properties"]["gnd_id"] = None
+                            else:
+                                # Validate detected GND is within the org's allowed area
+                                if org_area_obj and org_area_obj.org_area and org_area_obj.org_area != [0]:
+                                    if dominant_gnd.gid not in org_area_obj.org_area:
+                                        if is_land_parcel:
+                                            raise ValueError("Cannot save land parcel: geometry falls outside your organisation's allowed GND area.")
+                                        else:
+                                            item["properties"]["gnd_id"] = None
+                                    else:
+                                        item["properties"]["gnd_id"] = dominant_gnd.gid
+                                else:
+                                    item["properties"]["gnd_id"] = dominant_gnd.gid
+
+                    elif geom_type in ["point", "multipoint", "linestring", "multilinestring"]:
+                        gndID = item.get("properties", {}).get("gnd_id")
+                        if not gndID:
+                            # Reuse already-parsed geometry (no second parse)
+                            lookup_point = _geom_obj_4326.centroid
+                            try:
+                                with transaction.atomic():
+                                    containing_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=lookup_point).first()
+                            except Exception:
+                                containing_gnd = None
+                            if not containing_gnd:
+                                raise ValueError("Cannot save feature: geometry does not fall within any GND boundary.")
+                            else:
+                                if org_area_obj and org_area_obj.org_area and org_area_obj.org_area != [0]:
+                                    if containing_gnd.gid not in org_area_obj.org_area:
+                                        raise ValueError("Cannot save feature: geometry falls outside your organisation's allowed GND area.")
+                                    else:
+                                        item["properties"]["gnd_id"] = containing_gnd.gid
+                                else:
+                                    item["properties"]["gnd_id"] = containing_gnd.gid
+                    logger.debug(f"[SAVE⏱]   GND detection: {(time.perf_counter()-_t)*1000:.1f}ms (gnd_id provided: {bool(gndID)})")
+
+                    # Extract parent_id
+                    _t = time.perf_counter()
+                    parent_ids = item.get("properties", {}).get("parent_id", []) # [11287]
+                    if isinstance(parent_ids, list) and parent_ids:
+                        Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids).update(status=False)
+
+                    # Extract parent_uuid and convert it to parent_id
+                    parent_uuids = item.get("properties", {}).get("parent_uuid", [])
+                    parent_ids = []
+
+                    if isinstance(parent_uuids, list) and parent_uuids:
+                        parent_ids = list(Survey_Rep_DATA_Model.objects.filter(uuid__in=parent_uuids).values_list('id', flat=True))
+                        item["properties"]["parent_id"] = parent_ids  # Assign retrieved IDs to parent_id
+
+                    # Update status for parent_ids if they exist
+                    if parent_ids:
+                        Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids).update(status=False)
+                    logger.debug(f"[SAVE⏱]   Parent ID lookup + status update: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+                    _t = time.perf_counter()
+                    serializer = self.serializer_class(data=item)
+                    serializer_valid = serializer.is_valid()
+                    logger.debug(f"[SAVE⏱]   Serializer validation (incl. geom parse): {(time.perf_counter()-_t)*1000:.1f}ms")
+
+                    if serializer_valid:
+                        _t = time.perf_counter()
+                        # Save Survey_Rep_DATA_Model instance
+                        survey_rep = serializer.save()
+                        # Set su_id_id to self (self-referential FK) in one UPDATE
+                        survey_rep.su_id_id = survey_rep.id
+                        survey_rep.save(update_fields=['su_id_id'])
+                        logger.debug(f"[SAVE⏱]   INSERT survey_rep + su_id UPDATE: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+                        # Batch all related object creation into bulk_create lists
+                        geom_history_objs = [Survey_Rep_Geom_History_Model(
+                            su_id=survey_rep.id,
+                            user_id=survey_rep.user_id,
+                            layer_id=survey_rep.layer_id,
+                            calculated_area=survey_rep.calculated_area,
+                            reference_coordinate=survey_rep.reference_coordinate,
+                            geom=survey_rep.geom,
+                            status=survey_rep.status,
+                            ref_id=survey_rep.ref_id,
+                        )]
+                        Survey_Rep_Geom_History_Model.objects.bulk_create(geom_history_objs)
+                        logger.debug(f"[SAVE⏱]   Geom history INSERT: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+                        _t = time.perf_counter()
+                        # Create LA_Spatial_Unit_Model instance (needed as FK for related models)
+                        suID = LA_Spatial_Unit_Model.objects.create(su_id=survey_rep.id)
+
+                        # Batch all layer-specific model inserts into a single bulk_create per model class
+                        is_polygon = survey_rep.geom_type in ["multipolygon", "polygon"]
+                        is_line_point = survey_rep.geom_type in ["linestring", "point"]
+
+                        if survey_rep.layer_id in [1, 3, 6, 12] and is_polygon:
+                            Assessment_Model.objects.bulk_create([Assessment_Model(su_id=suID, user_id=user.id)])
+                            Tax_Info_Model.objects.bulk_create([Tax_Info_Model(su_id=suID)])
+
+                        if survey_rep.layer_id in [3, 12] and is_polygon:
+                            LA_SP_Fire_Rescue_Model.objects.bulk_create([LA_SP_Fire_Rescue_Model(su_id=suID)])
+
+                        if survey_rep.layer_id in [1, 6]:
+                            LA_LS_Land_Unit_Model.objects.bulk_create([LA_LS_Land_Unit_Model(su_id=suID)])
+                            LA_LS_Utinet_LU_Model.objects.bulk_create([LA_LS_Utinet_LU_Model(su_id=suID)])
+
+                        if survey_rep.layer_id in [2, 4, 5, 8, 9, 11]:
+                            if is_polygon:
+                                LA_LS_Ols_Polygon_Unit_Model.objects.bulk_create([LA_LS_Ols_Polygon_Unit_Model(su_id=suID)])
+                            elif is_line_point:
+                                LA_LS_Ols_PointLine_Unit_Model.objects.bulk_create([LA_LS_Ols_PointLine_Unit_Model(su_id=suID)])
+
+                        if survey_rep.layer_id == 3:
+                            LA_LS_Build_Unit_Model.objects.bulk_create([LA_LS_Build_Unit_Model(su_id=suID)])
+                            LA_LS_Utinet_BU_Model.objects.bulk_create([LA_LS_Utinet_BU_Model(su_id=suID)])
+
+                        if survey_rep.layer_id == 7:
+                            LA_LS_Ols_Polygon_Unit_Model.objects.bulk_create([LA_LS_Ols_Polygon_Unit_Model(su_id=suID)])
+                            LA_LS_Utinet_Ols_Model.objects.bulk_create([LA_LS_Utinet_Ols_Model(su_id=suID)])
+
+                        if survey_rep.layer_id in my_layerIDs:
+                            if is_polygon:
+                                LA_LS_MyLayer_Polygon_Unit_Model.objects.bulk_create([LA_LS_MyLayer_Polygon_Unit_Model(su_id=suID)])
+                            elif is_line_point:
+                                LA_LS_MyLayer_PointLine_Unit_Model.objects.bulk_create([LA_LS_MyLayer_PointLine_Unit_Model(su_id=suID)])
+                        logger.debug(f"[SAVE⏱]   Related model INSERTs (spatial unit + layer models): {(time.perf_counter()-_t)*1000:.1f}ms")
+                        logger.debug(f"[SAVE⏱] ── Feature [{index}] total: {(time.perf_counter()-_t_feat)*1000:.1f}ms")
+
+                        # Return only the fields the frontend needs to update feature IDs/metadata.
+                        # Avoids serializing the full geometry back (GeoFeatureModelSerializer is expensive).
+                        saved_records.append({
+                            "type": "Feature",
+                            "geometry": None,
+                            "properties": {
+                                "id": survey_rep.id,
+                                "su_id": survey_rep.id,
+                                "uuid": str(survey_rep.uuid),
+                                "gnd_id": survey_rep.gnd_id,
+                                "calculated_area": float(survey_rep.calculated_area) if survey_rep.calculated_area is not None else None,
+                                "layer_id": survey_rep.layer_id,
+                                "status": survey_rep.status,
+                                "parent_id": survey_rep.parent_id,
+                            },
+                        })
+
+                    else:
+                        logger.debug(f"[SAVE] [{index}] Serializer validation FAILED: {serializer.errors}")
+                        errors.append({"index": index, "errors": serializer.errors})
+                except Exception as e:
+                        logger.debug(f"[SAVE] [{index}] Exception during save: {e}", exc_info=True)
+                        errors.append({"index": index, "detail": str(e)})
+
+        # Return the response with saved records and errors
+        response_data = {
+            "saved_records": saved_records,
+            "errors": errors,
+            "warnings": warnings,
+        }
+
+        logger.debug(f"[SAVE⏱] ══ TOTAL backend time: {(time.perf_counter()-_t_start)*1000:.1f}ms | saved={len(saved_records)} errors={len(errors)} ══")
+        if saved_records:
+            return Response(response_data, status=status.HTTP_201_CREATED)
+        else:
+            return Response(response_data, status=status.HTTP_400_BAD_REQUEST)
+
+#------------------------------------------------------------------------------
+class Survey_Rep_DATA_Filter_User_View(APIView):
+    http_method_names = ['post']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+
+        user_obj = request.user
+        userID = user_obj.id # Retrieve userID from the User model
+        org_id = user_obj.org_id
+
+        layers = LayersModel.objects.filter(
+            Q(group_name__contains=["default"]) |
+            Q(group_name__contains=[userID]) |
+            (Q(group_name__contains=["org"]) & Q(org_id=org_id)) |
+            Q(user_id=userID)
+        ).values_list('layer_id', flat=True)
+
+        # Use the retrieved layer_ids to filter Survey_Rep_DATA_Model
+        # Exclude null-geometry records — these are legacy LADM records imported
+        # without spatial data.  Sending them to the frontend causes console spam
+        # and wastes bandwidth since they can never be rendered.
+        geom_data = Survey_Rep_DATA_Model.objects.filter(
+            layer_id__in=layers,
+            status=True,
+            org_id=org_id,
+            geom__isnull=False,
+        )
+
+        # Serialize geom data
+        serializer = Survey_Rep_DATA_Serializer(geom_data, many=True)
+        return Response(serializer.data, status=200)
+
+#------------------------------------------------------------------------------
+class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
+    http_method_names = ['patch']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    queryset = Survey_Rep_DATA_Model.objects.all()
+    serializer_class = Survey_Rep_DATA_Serializer
+
+    def update(self, request, *args, **kwargs):
+
+        data = request.data
+        user = request.user
+        user_id = user.id
+
+        # 🔐 Step 1: Check if user has edit permission
+
+        edit_permission_id = 201
+
+        user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
+        if not user_roles.exists():
+            return Response({"error": "User has no assigned roles."}, status=403)
+
+        role_id = user_roles.values_list('role_id', flat=True).first()
+
+        has_permission = Role_Permission_Model.objects.filter(
+            role_id=role_id,
+            permission_id=edit_permission_id,
+            edit=True
+        ).exists()
+
+        if not has_permission:
+            return Response({"error": "You do not have permission."}, status=403)
+
+        # print("Received GeoJSON Data:",json.dumps(data, indent=4))
+
+        with transaction.atomic():
+            # Retrieve the instance being updated
+            instance = self.get_object()
+
+            # Store the current values for comparison
+            old_data = {
+                "user_id": instance.user_id,
+                "layer_id": instance.layer_id,
+                "calculated_area": instance.calculated_area,
+                "reference_coordinate": instance.reference_coordinate,
+                "geom": instance.geom,
+                "status": instance.status,
+                "ref_id": instance.ref_id,
+            }
+
+            # Update the date_modified field
+            instance.date_modified = now()
+            instance.save(update_fields=['date_modified'])
+
+            # Proceed with the default update logic
+            response = super().update(request, *args, **kwargs)
+
+            # Recalculate calculated_area from updated geometry
+            updated_instance = self.get_object()
+            if updated_instance.geom:
+                _crs = updated_instance.crs or "EPSG:4326"
+                try:
+                    _srid = int(_crs.split(":")[-1])
+                except (ValueError, AttributeError):
+                    _srid = 4326
+                _geom_projected = updated_instance.geom.transform(5235, clone=True) if _srid in [4326, 4269, 4230] else updated_instance.geom.transform(_srid, clone=True)
+                if updated_instance.geom_type in ["polygon", "multipolygon"]:
+                    updated_instance.calculated_area = round(_geom_projected.area, 4)
+                elif updated_instance.geom_type in ["linestring", "multilinestring"]:
+                    updated_instance.calculated_area = round(_geom_projected.length, 4)
+                else:
+                    updated_instance.calculated_area = 0
+                updated_instance.save(update_fields=['calculated_area'])
+
+            # Re-enforce gnd_id for land parcels after geometry update
+            updated_instance = self.get_object()
+            if updated_instance.geom_type in ["polygon", "multipolygon"] and updated_instance.geom:
+                layer_id_val = updated_instance.layer_id
+                is_land_parcel = layer_id_val in [1, 6]
+                try:
+                    with transaction.atomic():
+                        intersecting_gnds = (
+                            sl_gnd_10m_Model.objects
+                            .filter(geom__intersects=updated_instance.geom)
+                            .annotate(inter_area=Area(GeoIntersection('geom', updated_instance.geom)))
+                            .order_by('-inter_area')
+                        )
+                        dominant_gnd = intersecting_gnds.first()
+                        if not dominant_gnd:
+                            if is_land_parcel:
+                                return Response(
+                                    {"error": "Cannot update land parcel: geometry does not fall within any GND boundary."},
+                                    status=400
+                                )
+                        else:
+                            org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
+                            if org_area_obj and org_area_obj.org_area and org_area_obj.org_area != [0]:
+                                if dominant_gnd.gid not in org_area_obj.org_area:
+                                    if is_land_parcel:
+                                        return Response(
+                                            {"error": "Cannot update land parcel: geometry falls outside your organisation's allowed GND area."},
+                                            status=400
+                                        )
+                                else:
+                                    updated_instance.gnd_id = dominant_gnd.gid
+                                    updated_instance.save(update_fields=['gnd_id'])
+                            else:
+                                updated_instance.gnd_id = dominant_gnd.gid
+                                updated_instance.save(update_fields=['gnd_id'])
+                except Exception:
+                    if is_land_parcel:
+                        raise
+                    pass  # gnd_id update failure should not roll back non-land geometry edits
+
+            elif updated_instance.geom_type in ["point", "multipoint", "linestring", "multilinestring"] and updated_instance.geom:
+                try:
+                    with transaction.atomic():
+                        lookup_point = updated_instance.geom.centroid
+                        containing_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=lookup_point).first()
+                    if not containing_gnd:
+                        return Response(
+                            {"error": "Cannot update feature: geometry does not fall within any GND boundary."},
+                            status=400
+                        )
+                    org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
+                    if org_area_obj and org_area_obj.org_area and org_area_obj.org_area != [0]:
+                        if containing_gnd.gid not in org_area_obj.org_area:
+                            return Response(
+                                {"error": "Cannot update feature: geometry falls outside your organisation's allowed GND area."},
+                                status=400
+                            )
+                    updated_instance.gnd_id = containing_gnd.gid
+                    updated_instance.save(update_fields=['gnd_id'])
+                except Exception:
+                    raise
+
+            # Check if any of the specific fields were updated
+            updated_instance = self.get_object()  # Get the instance with updated values
+            
+            new_data = {
+                "user_id": updated_instance.user_id,
+                "layer_id": updated_instance.layer_id,
+                "calculated_area": updated_instance.calculated_area,
+                "reference_coordinate": updated_instance.reference_coordinate,
+                "geom": updated_instance.geom,
+                "status": updated_instance.status,
+                "ref_id": instance.ref_id,
+            }
+
+            if old_data != new_data:  # Compare old and new data
+                Survey_Rep_Geom_History_Model.objects.create(
+                    su_id=updated_instance.id,
+                    user_id=updated_instance.user_id,
+                    layer_id=updated_instance.layer_id,
+                    calculated_area=updated_instance.calculated_area,
+                    reference_coordinate=updated_instance.reference_coordinate,
+                    geom=updated_instance.geom,
+                    status=updated_instance.status,
+                    ref_id=updated_instance.ref_id,
+                )
+
+            # Refresh the instance to include the latest data
+            updated_instance.refresh_from_db()
+
+            # Serialize and return the updated instance
+            serializer = self.get_serializer(updated_instance)
+
+            return Response(serializer.data, status=200)
+
+#------------------------ Bulk DELETE by IDs ----------------------------------
+class Survey_Rep_DATA_BulkDelete_id_View(APIView):
+    http_method_names = ['delete']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def delete_record_and_related(self, request, su_id):
+        user = request.user
+        user_id = user.id
+
+        user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
+        if not user_roles.exists():
+            return Response({"error": "User has no assigned roles."}, status=403)
+
+        role_id = user_roles.values_list('role_id', flat=True).first()
+
+        # 🔐 Step 1: Check if user has delete permission
+
+        del_permission_id = 201
+
+        has_permission = Role_Permission_Model.objects.filter(
+            role_id=role_id,
+            permission_id=del_permission_id,
+            delete=True
+        ).exists()
+
+        if not has_permission:
+            return Response({"error": "You do not have delete permission."}, status=403)
+
+        total_deleted = 0
+        parent_ids = []
+
+        try:
+            primary = Survey_Rep_DATA_Model.objects.get(id=su_id)
+            parent_ids = primary.parent_id or []
+
+            # Delete LA_Spatial_Unit_Model for this su_id
+            total_deleted += LA_Spatial_Unit_Model.objects.filter(su_id=su_id).delete()[0]
+
+            # Delete ref_id-related Survey_Rep_DATA_Model and LA_Spatial_Unit_Model
+            ref_qs = Survey_Rep_DATA_Model.objects.filter(ref_id=su_id)
+            ref_ids = list(ref_qs.values_list("id", flat=True))
+            total_deleted += ref_qs.delete()[0]
+            total_deleted += LA_Spatial_Unit_Model.objects.filter(su_id__in=ref_ids).delete()[0]
+
+            # Delete the main record
+            primary.delete()
+            total_deleted += 1
+
+        except Survey_Rep_DATA_Model.DoesNotExist:
+            pass
+
+        return total_deleted, parent_ids
+
+    def delete(self, request):
+        su_ids = request.data.get('ids', [])
+        if not isinstance(su_ids, list) or not su_ids:
+            return Response({"error": "Please provide a list of ids to delete."}, status=status.HTTP_400_BAD_REQUEST)
+
+        total_deleted = 0
+        deleted_ids = set()
+        parent_ids_to_update = set()
+
+        for su_id in su_ids:
+            if su_id in deleted_ids:
+                continue
+
+            # Pass request to the method
+            result = self.delete_record_and_related(request, su_id)
+            if isinstance(result, Response):  # permission denied
+                return result
+
+            deleted, parent_ids = result
+            total_deleted += deleted
+            deleted_ids.add(su_id)
+
+            if len(parent_ids) == 1:
+                parent_id = parent_ids[0]
+                siblings = Survey_Rep_DATA_Model.objects.filter(parent_id__contains=[parent_id])
+                for sibling in siblings:
+                    if sibling.id not in deleted_ids:
+                        d_result = self.delete_record_and_related(request, sibling.id)
+                        if isinstance(d_result, Response):  # permission denied
+                            return d_result
+
+                        d, _ = d_result
+                        total_deleted += d
+                        deleted_ids.add(sibling.id)
+
+                parent_ids_to_update.add(parent_id)
+
+            elif len(parent_ids) > 1:
+                parent_ids_to_update.update(parent_ids)
+
+        if parent_ids_to_update:
+            Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids_to_update).update(status=True)
+
+        return Response(
+            {"message": f"Records deleted. {total_deleted} total record(s) affected."},
+            status=status.HTTP_200_OK
+        )
+
+
+#________________________________________________ Survey Rep History View _______________________________________________________ not used
+class Survey_Rep_History_View_filter(APIView):
+    http_method_names = ['get']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, su_id):
+        rep_history = Survey_Rep_History_Model.objects.filter(su_id=su_id)
+        serializer = Survey_Rep_History_Serializer(rep_history, many=True)
+        return Response(serializer.data, status=200)
+
+#------------------------------------------------------------------------------
+class Survey_Rep_History_View_filter_username(APIView):
+    http_method_names = ['get']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+
+        user = request.user  # Get user from token
+        user_id = user.id    # Extract user_id
+
+
+        # Step 1: Get Survey_Rep_History records for the given userID
+        rep_history = Survey_Rep_History_Model.objects.filter(user_id=user_id)
+        serializer = Survey_Rep_History_Serializer_username(rep_history, many=True)
+
+        # Step 2: Extract `layer_id` for each record in `serializer.data`
+        response_data = []
+        for record in serializer.data:
+            su_id = record.get('su_id')  # Assuming `su_id` is in serializer.data
+
+            # Add `layer_id` to the response
+            layer_id_record = Survey_Rep_DATA_Model.objects.filter(id=su_id).values('layer_id').first()
+            record['layer_id'] = layer_id_record['layer_id'] if layer_id_record else None
+
+            # Fetch `user_email` from User model
+            user_id = record.get('user_id')
+            user = User.objects.filter(id=user_id).values('email').first()
+            record['username'] = user['email'] if user else None
+
+            response_data.append(record)
+
+        # Return the response with layer_id and other serializer data
+        return Response(response_data, status=200)
+
+#------------------------------------------------------------------------------
+class Survey_Rep_History_View_update(RetrieveUpdateDestroyAPIView):
+    http_method_names = ['patch', 'put', 'delete']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    queryset = Survey_Rep_History_Model.objects.all()
+    serializer_class = Survey_Rep_History_Serializer
+
+
+#________________________________________________ Geom Edit History View ________________________________________________________
+class Geom_Edit_History_View(ListCreateAPIView):
+    http_method_names = ['get']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    serializer_class = Survey_Rep_Geom_History_Serializer
+
+    def get_queryset(self):
+        # Get the su_id from the URL
+        ver_suid = self.kwargs.get('ver_suid')
+
+        # Subquery to find the earliest record for each unique geom
+        earliest_geom_records = (Survey_Rep_Geom_History_Model.objects.filter(su_id=ver_suid)
+            .values('geom')  # Group by geom
+            .annotate(earliest_date=Min('date_created'))  # Find the earliest date for each geom
+            .values_list('geom', 'earliest_date')  # Get geom and earliest date pairs
+        )
+
+        # Filter to include only records with the earliest date for each unique geom
+        queryset = Survey_Rep_Geom_History_Model.objects.filter(su_id=ver_suid).filter(
+            Q(geom__in=[record[0] for record in earliest_geom_records]) &
+            Q(date_created__in=[record[1] for record in earliest_geom_records])
+        )
+
+        return queryset.order_by('date_created')

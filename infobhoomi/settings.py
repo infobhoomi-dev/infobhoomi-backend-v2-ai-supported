@@ -11,9 +11,8 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 import os
-from os import getenv, path
+from os import path
 from pathlib import Path
-from django.core.management.utils import get_random_secret_key
 import dotenv
 from decouple import config
 
@@ -33,10 +32,12 @@ if os.name == 'nt':
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = getenv('SECRET_KEY', get_random_secret_key())
+# Must be set in .env.local (dev) or environment (production) — no fallback so failures are loud.
+SECRET_KEY = config('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Set DEBUG=False in .env.local or environment for production.
+DEBUG = config('DEBUG', cast=bool, default=False)
 
 # Read the dynamic IP address from environment variable
 # DYNAMIC_IP_ADDRESS = getenv('DYNAMIC_IP_ADDRESS', '192.168.11.20')
@@ -62,6 +63,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    # CorsMiddleware must be first — before any middleware that generates responses
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -69,17 +72,28 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
 ]
 
 AUTH_USER_MODEL = 'user.User'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.BasicAuthentication',
+        # BasicAuthentication removed — sends credentials on every request (insecure for REST)
         'rest_framework.authentication.TokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
+    # Default pagination prevents unbounded .objects.all() from OOM-ing the server
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 50,
+    # Throttle unauthenticated requests to protect login/auth endpoints
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '60/minute',
+        'user': '300/minute',
+    },
 }
 
 
@@ -112,6 +126,9 @@ DATABASES = {
         'PASSWORD': config('DB_PASSWORD'),
         'HOST': config('DB_HOST'),
         'PORT': config('DB_PORT'),
+        # Reuse DB connections across requests instead of reconnecting every time
+        'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', cast=int, default=60),
+        'CONN_HEALTH_CHECKS': True,
     }
 }
 # Password validation
@@ -138,6 +155,7 @@ USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -166,16 +184,44 @@ MEDIA_URL = '/media/'
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
+# HTTPS / security hardening — all controlled by environment so dev stays flexible.
+# In production set DJANGO_SECURE=True in .env / environment.
+_SECURE = config('DJANGO_SECURE', cast=bool, default=False)
+SECURE_SSL_REDIRECT = _SECURE
+SESSION_COOKIE_SECURE = _SECURE
+CSRF_COOKIE_SECURE = _SECURE
+SECURE_HSTS_SECONDS = 31536000 if _SECURE else 0  # 1 year
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _SECURE
+SECURE_HSTS_PRELOAD = _SECURE
+SECURE_CONTENT_TYPE_NOSNIFF = True  # safe to enable everywhere
+
 SECURE_MEDIA_URL = '/secure-media/'  # Ensure it's properly mapped
 SECURE_MEDIA_ROOT = os.path.join(BASE_DIR, 'secure-media')  # Define storage path
 
 # Cache settings
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': '127.0.0.1:11211',
+# Production: set REDIS_URL=redis://127.0.0.1:6379/1 and install django-redis.
+# Dev fallback: LocMemCache (per-process, not shared across gunicorn workers).
+_REDIS_URL = config('REDIS_URL', default='')
+if _REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': _REDIS_URL,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'SOCKET_CONNECT_TIMEOUT': 5,
+                'SOCKET_TIMEOUT': 5,
+            },
+            'KEY_PREFIX': 'infobhoomi',
+        }
     }
-}
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'infobhoomi-cache',
+        }
+    }
 
 LOGGING = {
     'version': 1,

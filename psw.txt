@@ -22,3 +22,122 @@ list(LA_LS_Land_Unit_Model.objects.exclude(land_name__isnull=True).exclude(land_
   Tip: Working with HTML/CSS? Add the frontend-design plugin:
      /plugin marketplace add anthropics/claude-code
      /plugin install frontend-design@claude-code-plugins
+
+
+> yes please
+
+● Read 1 file (ctrl+o to expand)
+
+● Write(audit_tables.py)
+  ⎿  Wrote 268 lines to audit_tables.py
+       1 """
+       2 DB Field Audit Script — InfoBhoomi
+       3 ====================================
+       4 Connects to the local PostgreSQL DB and for every table:
+       5   1. Counts total rows and null % per column
+       6   2. Checks if the column appears in models.py, serializers.py, views.py
+       7   3. Assigns a "cleanup priority" score
+       8   4. Outputs a JSON report + a summary CSV
+       9
+      10 Run from the backend root:
+     … +258 lines (ctrl+o to expand)
+
+● Now let's test it:
+
+● Bash(cd C:/InfoBhoomi/InfoBhoomi_Backend_dev2 && venv/Scripts/python.exe audit_tables.py 2>&1 | head -60)
+  ⎿  Connecting to database 
+     Loading source files 
+     Found 108 tables to audit (skipped 8 system tables)
+     … +11 lines (ctrl+o to expand)
+
+● Quick fix — Windows console can't render that emoji:
+
+● Update(audit_tables.py)
+  ⎿  Added 1 line, removed 1 line
+      224          table_data["high_priority_columns"] = high_count
+      225          report[table] = table_data
+      226
+      227 -        flag = f"  ⚠  {high_count} HIGH-priority columns" if high_count else ""
+      227 +        flag = f"  *** {high_count} HIGH-priority columns" if high_count else ""
+      228          print(f"  ({row_count} rows, {len(columns)} cols){flag}")
+      229
+      230      conn.close()
+
+● Bash(cd C:/InfoBhoomi/InfoBhoomi_Backend_dev2 && venv/Scripts/python.exe audit_tables.py 2>&1)
+  ⎿  Error: Exit code 1
+     Connecting to database 
+     Loading source files 
+     Found 108 tables to audit (skipped 8 system tables)
+
+       [  1/108] Inquiries  (0 rows, 11 cols)  *** 8 HIGH-priority columns
+       [  2/108] assessment  (3604 rows, 17 cols)  *** 1 HIGH-priority columns
+       [  3/108] assessment_ward  (15 rows, 3 cols)
+       [  4/108] attrib_panel_images  (0 rows, 7 cols)
+       [  5/108] authtoken_token  (9 rows, 3 cols)
+     … +167 lines (ctrl+o to see all)
+
+● Good — it ran all 108 tables. Just two more unicode characters to fix in the final print statements:
+
+● Update(audit_tables.py)
+  ⎿  Added 1 line, removed 1 line
+      233      json_path = os.path.join(BASE, "audit_report.json")
+      234      with open(json_path, "w", encoding="utf-8") as f:
+      235          json.dump(report, f, indent=2)
+      236 -    print(f"\nFull report  → {json_path}")
+      236 +    print(f"\nFull report  -> {json_path}")
+      237
+      238      # ── Write CSV summary (sorted by score desc) ──────────────────────────
+      239      csv_path = os.path.join(BASE, "audit_summary.csv")
+
+● Update(audit_tables.py)
+  ⎿  Added 1 line, removed 1 line
+      247          writer = csv.DictWriter(f, fieldnames=fieldnames)
+      248          writer.writeheader()
+      249          writer.writerows(csv_rows)
+      250 -    print(f"CSV summary  → {csv_path}")
+      250 +    print(f"CSV summary  -> {csv_path}")
+      251
+      252      # ── Print top 20 candidates ───────────────────────────────────────────
+      253      high_rows = [r for r in csv_rows if r["priority"] == "HIGH"]
+
+● Bash(cd C:/InfoBhoomi/InfoBhoomi_Backend_dev2 && venv/Scripts/python.exe audit_tables.py 2>&1 | tail -35)
+  ⎿  Full report  -> C:\InfoBhoomi\InfoBhoomi_Backend_dev2\audit_report.json
+     CSV summary  -> C:\InfoBhoomi\InfoBhoomi_Backend_dev2\audit_summary.csv
+     … +19 lines (ctrl+o to expand)
+  ⎿  (timeout 5m)
+
+● Everything worked. Here's what you now have:
+
+  Output Files
+
+  ┌───────────────────┬───────────────────────────────────────────────────────────────────────┐
+  │       File        │                           What it contains                            │
+  ├───────────────────┼───────────────────────────────────────────────────────────────────────┤
+  │ audit_report.json │ Full detail — every table, every column, null%, code cross-references │
+  ├───────────────────┼───────────────────────────────────────────────────────────────────────┤
+  │ audit_summary.csv │ One row per column sorted by priority — open in Excel/Sheets          │
+  └───────────────────┴───────────────────────────────────────────────────────────────────────┘
+
+  Results
+
+  - 108 tables audited
+  - 142 HIGH priority columns (100% null + not used in serializers/views)
+  - 188 MEDIUM priority columns (worth investigating)
+
+  How to Review with Claude
+
+  Step 1 — Open audit_summary.csv in Excel/Sheets to pick which table to review first.
+
+  Step 2 — For each table you want to clean up, paste this into a Claude chat:
+
+  "Review this table for cleanup. Here is the audit data: [paste the table's block from audit_report.json]"
+
+  The JSON report is structured by table name, so you can find e.g. survey_rep and copy just that block.
+
+  Quick wins to start with (100% null, HIGH priority):
+  - survey_rep — 5 dead columns (original_code, original_point_id, original_x/y/z_coord)
+  - tax_info — 3 dead columns (external_tax_id, date_valuation, tax_out_balance)
+  - la_spatial_unit — 2 dead columns (reference_id, level_id)
+  - la_sp_fire_rescue — 3 dead columns
+
+  Want to start reviewing any of these now?
