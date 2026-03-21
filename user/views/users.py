@@ -238,10 +238,12 @@ class AdminSourceUpdateView(APIView):
         except LA_Admin_Source_Model.DoesNotExist:
             return Response({"error": "Admin source not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Update type if provided
-        new_type = request.data.get('admin_source_type')
-        if new_type:
-            admin_source.admin_source_type = new_type
+        # Update fields if provided
+        for field in ('admin_source_type', 'reference_no', 'exte_arch_ref', 'source_description'):
+            if field in request.data:
+                setattr(admin_source, field, request.data[field] or None)
+        if 'acceptance_date' in request.data:
+            admin_source.acceptance_date = request.data['acceptance_date'] or None
 
         # Replace file if provided
         new_file = request.FILES.get('file')

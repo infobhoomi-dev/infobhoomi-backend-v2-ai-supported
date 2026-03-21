@@ -762,25 +762,25 @@ class RRR_Restriction_View(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, rrr_id):
-        perm_id = _rrr_perm_for_rrr_id(rrr_id)
+    def get(self, request, ba_unit_id):
+        perm_id = _rrr_perm_for_ba(ba_unit_id)
         if not _has_rrr_perm(request.user.id, perm_id, 'view'):
             return _rrr_permission_denied()
         try:
-            restrictions = LA_RRR_Restriction_Model.objects.filter(rrr_id=rrr_id)
+            restrictions = LA_RRR_Restriction_Model.objects.filter(ba_unit_id=ba_unit_id)
             serializer = LA_RRR_Restriction_Serializer(restrictions, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def post(self, request, rrr_id):
-        perm_id = _rrr_perm_for_rrr_id(rrr_id)
+    def post(self, request, ba_unit_id):
+        perm_id = _rrr_perm_for_ba(ba_unit_id)
         if not _has_rrr_perm(request.user.id, perm_id, 'add'):
             return _rrr_permission_denied()
         try:
             allowed_fields = ['rrr_restriction_type', 'description', 'time_begin', 'time_end']
             data = {k: (None if v == '' else v) for k, v in request.data.items() if k in allowed_fields}
-            data['rrr_id'] = rrr_id
+            data['ba_unit_id'] = ba_unit_id
             serializer = LA_RRR_Restriction_Serializer(data=data)
             if serializer.is_valid():
                 serializer.save()
@@ -789,15 +789,15 @@ class RRR_Restriction_View(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def delete(self, request, rrr_id):
-        perm_id = _rrr_perm_for_rrr_id(rrr_id)
+    def delete(self, request, ba_unit_id):
+        perm_id = _rrr_perm_for_ba(ba_unit_id)
         if not _has_rrr_perm(request.user.id, perm_id, 'edit'):
             return _rrr_permission_denied()
         restriction_id = request.data.get('id') or request.query_params.get('id')
         if not restriction_id:
             return Response({"error": "id is required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            obj = LA_RRR_Restriction_Model.objects.get(id=restriction_id, rrr_id=rrr_id)
+            obj = LA_RRR_Restriction_Model.objects.get(id=restriction_id, ba_unit_id=ba_unit_id)
             obj.delete()
             return Response({"detail": "Restriction deleted."}, status=status.HTTP_200_OK)
         except LA_RRR_Restriction_Model.DoesNotExist:
@@ -812,25 +812,25 @@ class RRR_Responsibility_View(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def get(self, request, rrr_id):
-        perm_id = _rrr_perm_for_rrr_id(rrr_id)
+    def get(self, request, ba_unit_id):
+        perm_id = _rrr_perm_for_ba(ba_unit_id)
         if not _has_rrr_perm(request.user.id, perm_id, 'view'):
             return _rrr_permission_denied()
         try:
-            responsibilities = LA_RRR_Responsibility_Model.objects.filter(rrr_id=rrr_id)
+            responsibilities = LA_RRR_Responsibility_Model.objects.filter(ba_unit_id=ba_unit_id)
             serializer = LA_RRR_Responsibility_Serializer(responsibilities, many=True)
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def post(self, request, rrr_id):
-        perm_id = _rrr_perm_for_rrr_id(rrr_id)
+    def post(self, request, ba_unit_id):
+        perm_id = _rrr_perm_for_ba(ba_unit_id)
         if not _has_rrr_perm(request.user.id, perm_id, 'add'):
             return _rrr_permission_denied()
         try:
             allowed_fields = ['rrr_responsibility_type', 'description', 'time_begin', 'time_end']
             data = {k: (None if v == '' else v) for k, v in request.data.items() if k in allowed_fields}
-            data['rrr_id'] = rrr_id
+            data['ba_unit_id'] = ba_unit_id
             serializer = LA_RRR_Responsibility_Serializer(data=data)
             if serializer.is_valid():
                 serializer.save()
@@ -839,15 +839,15 @@ class RRR_Responsibility_View(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-    def delete(self, request, rrr_id):
-        perm_id = _rrr_perm_for_rrr_id(rrr_id)
+    def delete(self, request, ba_unit_id):
+        perm_id = _rrr_perm_for_ba(ba_unit_id)
         if not _has_rrr_perm(request.user.id, perm_id, 'edit'):
             return _rrr_permission_denied()
         responsibility_id = request.data.get('id') or request.query_params.get('id')
         if not responsibility_id:
             return Response({"error": "id is required."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            obj = LA_RRR_Responsibility_Model.objects.get(id=responsibility_id, rrr_id=rrr_id)
+            obj = LA_RRR_Responsibility_Model.objects.get(id=responsibility_id, ba_unit_id=ba_unit_id)
             obj.delete()
             return Response({"detail": "Responsibility deleted."}, status=status.HTTP_200_OK)
         except LA_RRR_Responsibility_Model.DoesNotExist:

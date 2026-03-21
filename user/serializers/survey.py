@@ -24,6 +24,18 @@ class Survey_Rep_DATA_Serializer(GeoFeatureModelSerializer):
         # The serializer only creates the main model
         return super().create(validated_data)
 
+#_______________________________________________ Survey Rep MAP (lean) Serializer _________________________
+# Used by Survey_Rep_DATA_Filter_User_View (map load).
+# Only the fields the frontend actually reads — drops date_created, date_modified,
+# user_id, org_id, legal_area, legal_area_unit, dimension_2d_3d, reference_coordinate.
+# precision=6 ≈ 0.1 m accuracy — sufficient for rendering, reduces coordinate string size.
+class Survey_Rep_Map_Serializer(GeoFeatureModelSerializer):
+    class Meta:
+        model = Survey_Rep_DATA_Model
+        geo_field = 'geom'
+        fields = ['id', 'su_id', 'uuid', 'layer_id', 'gnd_id', 'calculated_area', 'parent_id', 'status']
+        precision = 6
+
 #------------------------------------------------------------------------------
 class Survey_Rep_DATA_Overview_Serializer(serializers.ModelSerializer):
     class Meta:

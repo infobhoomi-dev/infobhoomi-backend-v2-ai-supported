@@ -67,7 +67,7 @@ class Party_Data_Get_View(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         # Step 2: Search in `other_reg`
-        possible_match = Party_Model.objects.filter(other_reg__icontains=ext_pid).first()
+        possible_match = Party_Model.objects.filter(other_reg__contains=[ext_pid]).first()
 
         if possible_match:
             return Response({

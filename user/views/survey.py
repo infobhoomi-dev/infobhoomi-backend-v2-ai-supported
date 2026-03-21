@@ -367,10 +367,10 @@ class Survey_Rep_DATA_Filter_User_View(APIView):
             status=True,
             org_id=org_id,
             geom__isnull=False,
-        )
+        ).only('id', 'su_id', 'uuid', 'layer_id', 'gnd_id', 'calculated_area', 'parent_id', 'status', 'geom')
 
-        # Serialize geom data
-        serializer = Survey_Rep_DATA_Serializer(geom_data, many=True)
+        # Serialize geom data — lean serializer sends only map-required fields
+        serializer = Survey_Rep_Map_Serializer(geom_data, many=True)
         return Response(serializer.data, status=200)
 
 #------------------------------------------------------------------------------
@@ -428,13 +428,27 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
             instance.date_modified = now()
             instance.save(update_fields=['date_modified'])
 
+            # Ensure gnd_id is not null in the request payload before serializer
+            # validation runs.  The frontend sends null when geometry is edited
+            # (gnd_id is unknown until spatial detection runs post-update).
+            # We temporarily inject the instance's current value so validation
+            # passes; the post-update block below will re-enforce the correct
+            # gnd_id based on the new geometry.
+            import copy as _copy
+            _raw = request.data
+            _props = _raw.get('properties', {}) if isinstance(_raw, dict) else {}
+            if not _props.get('gnd_id'):
+                _mutable = _copy.deepcopy(dict(_raw))
+                _mutable.setdefault('properties', {})['gnd_id'] = instance.gnd_id
+                request._full_data = _mutable
+
             # Proceed with the default update logic
             response = super().update(request, *args, **kwargs)
 
             # Recalculate calculated_area from updated geometry
             updated_instance = self.get_object()
             if updated_instance.geom:
-                _crs = updated_instance.crs or "EPSG:4326"
+                _crs = updated_instance.reference_coordinate or "EPSG:4326"
                 try:
                     _srid = int(_crs.split(":")[-1])
                 except (ValueError, AttributeError):

@@ -74,7 +74,7 @@ class Survey_Rep_DATA_Model(gismodels.Model):
     date_created = models.DateTimeField(auto_now_add=True)
     date_modified = models.DateTimeField(null=True)
 
-    gnd_id = models.IntegerField(null=False, db_index=True)
+    gnd_id = models.IntegerField(null=False, db_index=True, db_column='gndid')
     org_id = models.IntegerField(null=False, db_index=True)
 
     class Meta:

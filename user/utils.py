@@ -8,6 +8,22 @@ All views use the same two-step pattern:
   2. Check Role_Permission_Model for a specific permission + action
 
 Use these helpers instead of copy-pasting that logic.
+
+Issue #9 fix
+────────────
+`has_perm` was previously two serial DB queries:
+  query 1 → get role_id from user_roles
+  query 2 → check role_permission
+
+It is now a single SQL statement (subquery):
+  SELECT EXISTS(
+      SELECT 1 FROM role_permission
+      WHERE role_id IN (SELECT role_id FROM user_roles WHERE users @> [user_id])
+        AND permission_id = X
+        AND <action> = true
+  )
+
+This halves the permission-check overhead on every protected endpoint.
 """
 
 from rest_framework.response import Response
@@ -20,10 +36,8 @@ def get_user_role_id(user_id):
     """
     Return the role_id for *user_id*, or None if the user has no role.
 
-    Usage:
-        role_id = get_user_role_id(request.user.id)
-        if role_id is None:
-            return Response({"error": "User has no assigned roles."}, status=403)
+    Prefer has_perm() for simple allow/deny checks — it uses a single query.
+    Use this only when you need the raw role_id for other purposes.
     """
     row = User_Roles_Model.objects.filter(
         users__contains=[user_id]
@@ -37,15 +51,20 @@ def has_perm(user_id, permission_id, action):
 
     *action* must be one of: 'view', 'add', 'edit', 'delete'.
 
+    Issue #9 fix: executes as a single SQL round trip instead of two.
+    Django evaluates `role_id__in=<queryset>` as a subquery, so the DB
+    sees one statement: EXISTS(... IN (SELECT role_id FROM user_roles ...)).
+
     Usage:
         if not has_perm(request.user.id, 201, 'add'):
             return perm_denied()
     """
-    role_id = get_user_role_id(user_id)
-    if role_id is None:
-        return False
+    user_role_ids = User_Roles_Model.objects.filter(
+        users__contains=[user_id]
+    ).values('role_id')
+
     return Role_Permission_Model.objects.filter(
-        role_id=role_id,
+        role_id__in=user_role_ids,
         permission_id=permission_id,
         **{action: True}
     ).exists()

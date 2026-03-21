@@ -206,10 +206,10 @@ urlpatterns = [
     path('lnd-physical-env/update/su_id=<int:su_id>/', Lnd_Physical_Env_Update_View.as_view()),
 
 #__ RRR Restriction Sub-entries __
-    path('rrr-restrictions/rrr_id=<int:rrr_id>/', RRR_Restriction_View.as_view()),
+    path('rrr-restrictions/ba_unit_id=<int:ba_unit_id>/', RRR_Restriction_View.as_view()),
 
 #__ RRR Responsibility Sub-entries __
-    path('rrr-responsibilities/rrr_id=<int:rrr_id>/', RRR_Responsibility_View.as_view()),
+    path('rrr-responsibilities/ba_unit_id=<int:ba_unit_id>/', RRR_Responsibility_View.as_view()),
 
 #__ RRR Extra Documents __
     path('rrr-add-document/ba_unit_id=<int:ba_unit_id>/', RRR_Add_Document_View.as_view()),
@@ -318,6 +318,8 @@ urlpatterns = [
 
     path('ba_unit/update/<int:ba_unit_id>/', SL_BA_Unit_Update_View.as_view()), # for Delete RRR record "status = False"
     path('rrr/update/<int:ba_unit_id>/', RRR_Update_View.as_view()),  # PATCH existing RRR entry
+    path('rrr/terminate/<int:rrr_id>/', RRR_Terminate_View.as_view()),  # Issue #8: soft-delete a right
+    path('rrr-history/', RRR_Audit_History_View.as_view()),              # Issue #8: GET ?su_id=n
 
     path('admin-source/file/<int:admin_source_id>/', DownloadAdminSourcePDF.as_view(), name='download_admin_pdf'),
     path('admin-source/update/<int:admin_source_id>/', AdminSourceUpdateView.as_view()),

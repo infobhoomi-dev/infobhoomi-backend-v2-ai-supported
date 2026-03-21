@@ -70,6 +70,64 @@ def _rrr_perm_for_rrr_id(rrr_id):
 from ..utils import has_perm as _has_rrr_perm, perm_denied as _rrr_permission_denied  # noqa: E402
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Issue #8: RRR Audit Helper
+# ─────────────────────────────────────────────────────────────────────────────
+def _write_rrr_audit(rrr, action, user_id, user_name='', su_id=None):
+    """Write one row to la_rrr_audit capturing the full RRR state at this moment."""
+    # Snapshot parties — convert Decimal share to str for JSON serialization
+    parties = [
+        {
+            'pid_id':          p['pid_id'],
+            'party_role_type': p['party_role_type'],
+            'share':           str(p['share']) if p['share'] is not None else None,
+            'share_type':      p['share_type'],
+        }
+        for p in Party_Roles_Model.objects.filter(rrr_id=rrr).values(
+            'pid_id', 'party_role_type', 'share', 'share_type'
+        )
+    ]
+    # Snapshot mortgage (if any)
+    mortgage_snap = None
+    try:
+        m = rrr.mortgage
+        mortgage_snap = {
+            'amount':          str(m.amount) if m.amount is not None else None,
+            'interest':        str(m.interest) if m.interest is not None else None,
+            'ranking':         m.ranking,
+            'mortgage_type':   m.mortgage_type,
+            'mortgage_ref_id': m.mortgage_ref_id,
+            'mortgagee':       m.mortgagee,
+        }
+    except LA_Mortgage_Model.DoesNotExist:
+        pass
+
+    # Resolve su_id if not provided
+    if su_id is None:
+        try:
+            su_id = rrr.ba_unit_id.su_id_id
+        except Exception:
+            su_id = None
+
+    LA_RRR_Audit_Model.objects.create(
+        rrr_id=rrr.rrr_id,
+        ba_unit_id=rrr.ba_unit_id_id,
+        su_id=su_id,
+        action=action,
+        changed_by=user_id,
+        changed_by_name=user_name,
+        snapshot={
+            'rrr_type':    rrr.rrr_type,
+            'time_begin':  str(rrr.time_begin) if rrr.time_begin else None,
+            'time_end':    str(rrr.time_end) if rrr.time_end else None,
+            'description': rrr.description,
+            'status':      rrr.status,
+            'parties':     parties,
+            'mortgage':    mortgage_snap,
+        },
+    )
+
+
 #________________________________________________ RRR Data Save View ____________________________________________________________
 class RRR_Data_Save_View(APIView):
     http_method_names = ['post']
@@ -92,27 +150,57 @@ class RRR_Data_Save_View(APIView):
                 if not _has_rrr_perm(user_id, perm_id, 'add'):
                     return _rrr_permission_denied()
 
-            # Parse "parties" JSON string if needed
-            parties = data.get('parties', [])
-            if isinstance(parties, str):
+            # Frontend sends the party list under "rights" (not "parties").
+            # Parse it — it may arrive as a JSON string when sent via FormData.
+            rights = data.get('rights', [])
+            if isinstance(rights, str):
                 try:
-                    parties = json.loads(parties)
+                    rights = json.loads(rights)
                 except json.JSONDecodeError:
                     return Response(
-                        {"error": "Invalid JSON format for 'parties' field"},
+                        {"error": "Invalid JSON format for 'rights' field"},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            # 1 Create BA Unit
-            ba_unit = SL_BA_Unit_Model.objects.create(
-                su_id_id=data['su_id'],
-                sl_ba_unit_name=data['sl_ba_unit_name'],
-                sl_ba_unit_type=data['sl_ba_unit_type'],
-            )
+            if not rights:
+                return Response(
+                    {"error": "'rights' must contain at least one party."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            # 2 Create Admin Source (file later)
+            # 1 Resolve BA Unit (Issue #5 fix — Option A)
+            # Each title transaction gets its own BA unit (ownership deed, mortgage, etc.).
+            # If the frontend sends an existing ba_unit_id, reuse it (same transaction,
+            # e.g. adding another party to an existing deed). This also prevents accidental
+            # duplicates when the user clicks Save twice — the second request carries the
+            # ba_unit_id returned by the first and hits the existing record.
+            # If ba_unit_id is absent or null → new transaction → create a new BA unit.
+            existing_ba_unit_id = data.get('ba_unit_id')
+            if existing_ba_unit_id:
+                try:
+                    ba_unit = SL_BA_Unit_Model.objects.get(
+                        ba_unit_id=existing_ba_unit_id, status=True
+                    )
+                except SL_BA_Unit_Model.DoesNotExist:
+                    return Response(
+                        {"error": f"BA unit {existing_ba_unit_id} not found or inactive."},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                # Frontend sends: code → sl_ba_unit_name, la_ba_unit_type → sl_ba_unit_type
+                ba_unit = SL_BA_Unit_Model.objects.create(
+                    su_id_id=data['su_id'],
+                    sl_ba_unit_name=data.get('code', ''),
+                    sl_ba_unit_type=data.get('la_ba_unit_type', 'basicPropertyUnit'),
+                )
+
+            # 2 Create Admin Source (file attached later)
             admin_source = LA_Admin_Source_Model.objects.create(
                 admin_source_type=data['admin_source_type'],
+                reference_no=data.get('reference_no') or None,
+                acceptance_date=data.get('acceptance_date') or None,
+                exte_arch_ref=data.get('exte_arch_ref') or None,
+                source_description=data.get('source_description') or None,
                 done_by=user_id,
                 user_id=user_id,
                 file_path=None
@@ -131,34 +219,55 @@ class RRR_Data_Save_View(APIView):
                 admin_source.file_path = saved_path
                 admin_source.save()
 
-            # 4 Create RRR + Party Roles
-            created_rrrs = []
-            for party in parties:
-                rrr = LA_RRR_Model.objects.create(
-                    ba_unit_id=ba_unit,
-                    admin_source_id=admin_source,
-                    pid_id=party['pid'],
-                    rrr_type=party.get('rrr_type'),
-                    time_begin=party.get('time_begin') or None,
-                    time_end=party.get('time_end') or None,
-                    description=party.get('description'),
-                )
-                created_rrrs.append(rrr.rrr_id)
+            # 4 Create ONE la_rrr for this right (Issue #2 fix).
+            # RRR-level fields (right_type, dates, description) are shared across all
+            # parties in one transaction — take them from the first entry.
+            # Frontend field mapping: right_type → rrr_type, date_start → time_begin,
+            #                         date_end → time_end
+            first = rights[0]
+            rrr = LA_RRR_Model.objects.create(
+                ba_unit_id=ba_unit,
+                admin_source_id=admin_source,
+                rrr_type=first.get('right_type'),
+                time_begin=first.get('date_start') or None,
+                time_end=first.get('date_end') or None,
+                description=first.get('description'),
+            )
 
-                Party_Roles_Model.objects.create(
-                    pid_id=party['pid'],
+            # 4b Create LA_Mortgage_Model record if this is a mortgage right (Issue #6 fix).
+            mortgage_data = data.get('mortgage')
+            if mortgage_data and (first.get('right_type') or '').lower() == 'mortgage':
+                LA_Mortgage_Model.objects.create(
                     rrr_id=rrr,
-                    party_role_type=party['party_role_type'],
-                    share_type=party.get('share_type'),
-                    share=party.get('share'),
+                    amount=mortgage_data.get('amount') or None,
+                    interest=mortgage_data.get('interest') or None,
+                    ranking=mortgage_data.get('ranking') or None,
+                    mortgage_type=mortgage_data.get('mortgage_type') or None,
+                    mortgage_ref_id=mortgage_data.get('mortgage_ref_id') or None,
+                    mortgagee=mortgage_data.get('mortgagee') or None,
+                )
+
+            # 5 Create one Party_Roles row per party, all linked to the same RRR.
+            # Frontend field mapping: party → pid_id, right_type used as party_role_type.
+            for right in rights:
+                Party_Roles_Model.objects.create(
+                    pid_id=right['party'],
+                    rrr_id=rrr,
+                    party_role_type=right.get('right_type', ''),
+                    share_type=right.get('share_type'),
+                    share=right.get('share'),
                     done_by=user_id
                 )
+
+            # 6 Write audit record (Issue #8)
+            user_name = f"{user_obj.first_name} {user_obj.last_name}".strip() or user_obj.username
+            _write_rrr_audit(rrr, LA_RRR_Audit_Model.CREATE, user_id, user_name, su_id=data.get('su_id'))
 
             return Response({
                 "message": "BA Unit data saved successfully",
                 "ba_unit_id": ba_unit.ba_unit_id,
                 "admin_source_id": admin_source.admin_source_id,
-                "created_rrr_ids": created_rrrs,
+                "rrr_id": rrr.rrr_id,
                 "file_saved_as": admin_source.file_path.name if admin_source.file_path else None
             }, status=status.HTTP_201_CREATED)
 
@@ -274,7 +383,7 @@ class RRR_Data_get_View(APIView):
             response_data = []
 
             for ba_unit in ba_units:
-                rrrs = LA_RRR_Model.objects.filter(ba_unit_id=ba_unit).select_related('admin_source_id', 'pid')
+                rrrs = LA_RRR_Model.objects.filter(ba_unit_id=ba_unit, status=True).select_related('admin_source_id')
 
                 admin_sources = []
                 seen_admin_source_ids = set()
@@ -291,42 +400,51 @@ class RRR_Data_get_View(APIView):
                         admin_sources.append({
                             "admin_source_id": admin_source.admin_source_id,
                             "admin_source_type": admin_source.admin_source_type,
+                            "reference_no": admin_source.reference_no,
+                            "acceptance_date": str(admin_source.acceptance_date) if admin_source.acceptance_date else None,
+                            "exte_arch_ref": admin_source.exte_arch_ref,
+                            "source_description": admin_source.source_description,
                             "file_url": file_url,
                             "doc_link_id": None,  # primary doc has no link id
                         })
 
-                    # Build rrr_list entry here (inside for rrr loop, NOT inside for doc_link loop)
-                    party_role = Party_Roles_Model.objects.filter(rrr_id=rrr).first()
-                    party_role_type = party_role.party_role_type if party_role else None
+                    # All party roles for this RRR (Issue #2: one rrr, many parties)
+                    party_roles = Party_Roles_Model.objects.select_related('pid').filter(rrr_id=rrr)
+                    parties_list = [
+                        {
+                            "pid": pr.pid_id,
+                            "party_name": pr.pid.party_full_name if pr.pid else None,
+                            "share_type": pr.share_type,
+                            "share": float(pr.share) if pr.share is not None else None,
+                            "party_role_type": pr.party_role_type,
+                        }
+                        for pr in party_roles
+                    ]
 
-                    restrictions = LA_RRR_Restriction_Model.objects.filter(rrr_id=rrr).values(
-                        'id', 'rrr_restriction_type', 'description', 'time_begin', 'time_end'
-                    )
-                    responsibilities = LA_RRR_Responsibility_Model.objects.filter(rrr_id=rrr).values(
-                        'id', 'rrr_responsibility_type', 'description', 'time_begin', 'time_end'
-                    )
+                    # Issue #6: include mortgage details when present
+                    mortgage_obj = None
+                    try:
+                        m = rrr.mortgage  # OneToOne reverse accessor
+                        mortgage_obj = {
+                            "amount": float(m.amount) if m.amount is not None else None,
+                            "interest": float(m.interest) if m.interest is not None else None,
+                            "ranking": m.ranking,
+                            "mortgage_type": m.mortgage_type,
+                            "mortgage_ref_id": m.mortgage_ref_id,
+                            "mortgagee": m.mortgagee,
+                        }
+                    except LA_Mortgage_Model.DoesNotExist:
+                        pass
 
                     rrr_list.append({
                         "rrr_id": rrr.rrr_id,
-                        "pid": rrr.pid_id,
-                        "party_name": rrr.pid.party_full_name if rrr.pid else None,
-                        "share_type": party_role.share_type if party_role else None,
-                        "share": float(party_role.share) if party_role and party_role.share is not None else None,
-                        "party_role_type": party_role_type,
                         "rrr_type": rrr.rrr_type,
                         "time_begin": str(rrr.time_begin) if rrr.time_begin else None,
                         "time_end": str(rrr.time_end) if rrr.time_end else None,
                         "description": rrr.description,
-                        "restrictions": [
-                            {**r, "time_begin": str(r["time_begin"]) if r["time_begin"] else None,
-                                  "time_end": str(r["time_end"]) if r["time_end"] else None}
-                            for r in restrictions
-                        ],
-                        "responsibilities": [
-                            {**r, "time_begin": str(r["time_begin"]) if r["time_begin"] else None,
-                                  "time_end": str(r["time_end"]) if r["time_end"] else None}
-                            for r in responsibilities
-                        ],
+                        "status": rrr.status,
+                        "parties": parties_list,
+                        "mortgage": mortgage_obj,
                     })
 
                 # Additional docs (from LA_RRR_Document_Model linked to this BA unit)
@@ -344,12 +462,30 @@ class RRR_Data_get_View(APIView):
                             "doc_link_id": doc_link.id,
                         })
 
+                # Restrictions and responsibilities are per-property (BA unit), not per-right.
+                ba_restrictions = LA_RRR_Restriction_Model.objects.filter(ba_unit_id=ba_unit).values(
+                    'id', 'rrr_restriction_type', 'description', 'time_begin', 'time_end'
+                )
+                ba_responsibilities = LA_RRR_Responsibility_Model.objects.filter(ba_unit_id=ba_unit).values(
+                    'id', 'rrr_responsibility_type', 'description', 'time_begin', 'time_end'
+                )
+
                 response_data.append({
                     "ba_unit_id": ba_unit.ba_unit_id,
                     "sl_ba_unit_name": ba_unit.sl_ba_unit_name,
                     "sl_ba_unit_type": ba_unit.sl_ba_unit_type,
                     "admin_sources": admin_sources,
-                    "rrrs": rrr_list
+                    "rrrs": rrr_list,
+                    "restrictions": [
+                        {**r, "time_begin": str(r["time_begin"]) if r["time_begin"] else None,
+                              "time_end": str(r["time_end"]) if r["time_end"] else None}
+                        for r in ba_restrictions
+                    ],
+                    "responsibilities": [
+                        {**r, "time_begin": str(r["time_begin"]) if r["time_begin"] else None,
+                              "time_end": str(r["time_end"]) if r["time_end"] else None}
+                        for r in ba_responsibilities
+                    ],
                 })
 
             # return Response(result, status=status.HTTP_200_OK)
@@ -460,8 +596,15 @@ class RRR_Update_View(APIView):
             # --- Update admin source type / replace file ---
             admin_source = rrr.admin_source_id
             if admin_source:
-                if 'admin_source_type' in data:
-                    admin_source.admin_source_type = data['admin_source_type']
+                as_fields = {}
+                for field in ('admin_source_type', 'reference_no', 'exte_arch_ref', 'source_description'):
+                    if field in data:
+                        as_fields[field] = data[field] or None
+                if 'acceptance_date' in data:
+                    as_fields['acceptance_date'] = data['acceptance_date'] or None
+                if as_fields:
+                    for k, v in as_fields.items():
+                        setattr(admin_source, k, v)
                     admin_source.save()
 
                 file = request.FILES.get('file')
@@ -481,3 +624,60 @@ class RRR_Update_View(APIView):
                     admin_source.save()
 
         return Response({"message": "RRR entry updated successfully"}, status=status.HTTP_200_OK)
+
+
+#________________________________________________ RRR Terminate View (Issue #8) ________________________________________________
+class RRR_Terminate_View(APIView):
+    """PATCH /api/user/rrr-terminate/<rrr_id>/ — soft-delete a right and write an audit record."""
+    http_method_names = ['patch']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request, rrr_id):
+        try:
+            rrr = LA_RRR_Model.objects.select_related('ba_unit_id').get(rrr_id=rrr_id)
+        except LA_RRR_Model.DoesNotExist:
+            return Response({"error": "RRR not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        perm_id = _rrr_perm_for_rrr_id(rrr_id)
+        if not _has_rrr_perm(request.user.id, perm_id, 'edit'):
+            return _rrr_permission_denied()
+
+        if not rrr.status:
+            return Response({"error": "RRR is already terminated."}, status=status.HTTP_400_BAD_REQUEST)
+
+        rrr.status = False
+        rrr.save()
+
+        user = request.user
+        user_name = f"{user.first_name} {user.last_name}".strip() or user.username
+        su_id = rrr.ba_unit_id.su_id_id if rrr.ba_unit_id else None
+        _write_rrr_audit(rrr, LA_RRR_Audit_Model.TERMINATE, user.id, user_name, su_id=su_id)
+
+        return Response({"message": "RRR terminated successfully."}, status=status.HTTP_200_OK)
+
+
+#________________________________________________ RRR Audit History View (Issue #8) ____________________________________________
+class RRR_Audit_History_View(APIView):
+    """GET /api/user/rrr-history/?su_id=<n> — return the full audit log for a parcel."""
+    http_method_names = ['get']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        su_id = request.query_params.get('su_id')
+        if not su_id:
+            return Response({"error": "su_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        perm_id = _rrr_perm_for_su(su_id)
+        if not _has_rrr_perm(request.user.id, perm_id, 'view'):
+            return _rrr_permission_denied()
+
+        records = list(
+            LA_RRR_Audit_Model.objects.filter(su_id=su_id).values(
+                'id', 'rrr_id', 'ba_unit_id', 'action',
+                'changed_by', 'changed_by_name', 'changed_at', 'snapshot'
+            )
+        )
+        return Response(records, status=status.HTTP_200_OK)
