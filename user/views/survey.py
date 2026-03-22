@@ -242,6 +242,8 @@ class Survey_Rep_DATA_Save_View(APIView):
                         _t = time.perf_counter()
                         # Save Survey_Rep_DATA_Model instance
                         survey_rep = serializer.save()
+                        _t_insert = time.perf_counter()
+                        logger.debug(f"[SAVE⏱]   serializer.save() only: {(_t_insert-_t)*1000:.1f}ms")
                         # Set su_id_id to self (self-referential FK) in one UPDATE
                         survey_rep.su_id_id = survey_rep.id
                         survey_rep.save(update_fields=['su_id_id'])
