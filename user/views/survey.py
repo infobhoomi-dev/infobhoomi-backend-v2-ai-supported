@@ -25,6 +25,8 @@ from django.contrib.gis.db.models.functions import Area, Intersection as GeoInte
 import json, os, time
 from datetime import timedelta
 
+import user
+
 from ..models import *
 from ..serializers import *
 from ..constant import *
@@ -391,7 +393,6 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
         user_id = user.id
 
         # 🔐 Step 1: Check if user has edit permission
-
         edit_permission_id = 201
 
         user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
@@ -408,14 +409,16 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
 
         if not has_permission:
             return Response({"error": "You do not have permission."}, status=403)
+        
+        # Fetch org area once — reused in both polygon and point/line GND branches
+        org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
 
-        # print("Received GeoJSON Data:",json.dumps(data, indent=4))
+        import copy as _copy
 
         with transaction.atomic():
-            # Retrieve the instance being updated
+            # Single get_object() — snapshot old data before mutation
             instance = self.get_object()
 
-            # Store the current values for comparison
             old_data = {
                 "user_id": instance.user_id,
                 "layer_id": instance.layer_id,
@@ -426,17 +429,12 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                 "ref_id": instance.ref_id,
             }
 
-            # Update the date_modified field
-            instance.date_modified = now()
-            instance.save(update_fields=['date_modified'])
-
             # Ensure gnd_id is not null in the request payload before serializer
             # validation runs.  The frontend sends null when geometry is edited
             # (gnd_id is unknown until spatial detection runs post-update).
             # We temporarily inject the instance's current value so validation
             # passes; the post-update block below will re-enforce the correct
             # gnd_id based on the new geometry.
-            import copy as _copy
             _raw = request.data
             _props = _raw.get('properties', {}) if isinstance(_raw, dict) else {}
             if not _props.get('gnd_id'):
@@ -444,120 +442,138 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                 _mutable.setdefault('properties', {})['gnd_id'] = instance.gnd_id
                 request._full_data = _mutable
 
-            # Proceed with the default update logic
-            response = super().update(request, *args, **kwargs)
+            # Proceed with the default update logic (calls get_object() internally)
+            super().update(request, *args, **kwargs)
+
+            # Single refresh after super().update() — replaces the 3 separate
+            # get_object() calls that were scattered through the post-update logic.
+            instance.refresh_from_db()
+
+            # Accumulate all post-update field changes; flush with one save() at end.
+            fields_to_save = ['date_modified']
+            instance.date_modified = now()
 
             # Recalculate calculated_area from updated geometry
-            updated_instance = self.get_object()
-            if updated_instance.geom:
-                _crs = updated_instance.reference_coordinate or "EPSG:4326"
+            if instance.geom:
+                _crs = instance.reference_coordinate or "EPSG:4326"
                 try:
                     _srid = int(_crs.split(":")[-1])
                 except (ValueError, AttributeError):
                     _srid = 4326
-                _geom_projected = updated_instance.geom.transform(5235, clone=True) if _srid in [4326, 4269, 4230] else updated_instance.geom.transform(_srid, clone=True)
-                if updated_instance.geom_type in ["polygon", "multipolygon"]:
-                    updated_instance.calculated_area = round(_geom_projected.area, 4)
-                elif updated_instance.geom_type in ["linestring", "multilinestring"]:
-                    updated_instance.calculated_area = round(_geom_projected.length, 4)
+                _geom_projected = instance.geom.transform(5235, clone=True) if _srid in [4326, 4269, 4230] else instance.geom.transform(_srid, clone=True)
+                if instance.geom_type in ["polygon", "multipolygon"]:
+                    instance.calculated_area = round(_geom_projected.area, 4)
+                elif instance.geom_type in ["linestring", "multilinestring"]:
+                    instance.calculated_area = round(_geom_projected.length, 4)
                 else:
-                    updated_instance.calculated_area = 0
-                updated_instance.save(update_fields=['calculated_area'])
+                    instance.calculated_area = 0
+                fields_to_save.append('calculated_area')
 
-            # Re-enforce gnd_id for land parcels after geometry update
-            updated_instance = self.get_object()
-            if updated_instance.geom_type in ["polygon", "multipolygon"] and updated_instance.geom:
-                layer_id_val = updated_instance.layer_id
+            # Re-enforce gnd_id after geometry update
+            if instance.geom_type in ["polygon", "multipolygon"] and instance.geom:
+                layer_id_val = instance.layer_id
                 is_land_parcel = layer_id_val in [1, 6]
                 try:
                     with transaction.atomic():
-                        intersecting_gnds = (
-                            sl_gnd_10m_Model.objects
-                            .filter(geom__intersects=updated_instance.geom)
-                            .annotate(inter_area=Area(GeoIntersection('geom', updated_instance.geom)))
-                            .order_by('-inter_area')
-                        )
-                        dominant_gnd = intersecting_gnds.first()
+                        # Fast path: centroid point-in-polygon (uses spatial index, no area computation)
+                        centroid = instance.geom.centroid
+                        dominant_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=centroid).first()
                         if not dominant_gnd:
-                            if is_land_parcel:
-                                return Response(
-                                    {"error": "Cannot update land parcel: geometry does not fall within any GND boundary."},
-                                    status=400
-                                )
-                        else:
-                            org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
-                            if org_area_obj and org_area_obj.org_area and org_area_obj.org_area != [0]:
-                                if dominant_gnd.gid not in org_area_obj.org_area:
-                                    if is_land_parcel:
-                                        return Response(
-                                            {"error": "Cannot update land parcel: geometry falls outside your organisation's allowed GND area."},
-                                            status=400
-                                        )
-                                else:
-                                    updated_instance.gnd_id = dominant_gnd.gid
-                                    updated_instance.save(update_fields=['gnd_id'])
+                            # Slow fallback: parcel straddles a GND boundary — find dominant by intersection area
+                            dominant_gnd = (
+                                sl_gnd_10m_Model.objects
+                                .filter(geom__intersects=instance.geom)
+                                .annotate(inter_area=Area(GeoIntersection('geom', instance.geom)))
+                                .order_by('-inter_area')
+                                .first()
+                            )
+                    if not dominant_gnd:
+                        if is_land_parcel:
+                            return Response(
+                                {"error": "Cannot update land parcel: geometry does not fall within any GND boundary."},
+                                status=400
+                            )
+                    else:
+                        if org_area_obj and org_area_obj.org_area and org_area_obj.org_area != [0]:
+                            if dominant_gnd.gid not in org_area_obj.org_area:
+                                if is_land_parcel:
+                                    return Response(
+                                        {"error": "Cannot update land parcel: geometry falls outside your organisation's allowed GND area."},
+                                        status=400
+                                    )
                             else:
-                                updated_instance.gnd_id = dominant_gnd.gid
-                                updated_instance.save(update_fields=['gnd_id'])
+                                instance.gnd_id = dominant_gnd.gid
+                                fields_to_save.append('gnd_id')
+                        else:
+                            instance.gnd_id = dominant_gnd.gid
+                            fields_to_save.append('gnd_id')
                 except Exception:
                     if is_land_parcel:
                         raise
-                    pass  # gnd_id update failure should not roll back non-land geometry edits
 
-            elif updated_instance.geom_type in ["point", "multipoint", "linestring", "multilinestring"] and updated_instance.geom:
+            elif instance.geom_type in ["point", "multipoint", "linestring", "multilinestring"] and instance.geom:
                 try:
                     with transaction.atomic():
-                        lookup_point = updated_instance.geom.centroid
+                        lookup_point = instance.geom.centroid
                         containing_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=lookup_point).first()
                     if not containing_gnd:
                         return Response(
                             {"error": "Cannot update feature: geometry does not fall within any GND boundary."},
                             status=400
                         )
-                    org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
                     if org_area_obj and org_area_obj.org_area and org_area_obj.org_area != [0]:
                         if containing_gnd.gid not in org_area_obj.org_area:
                             return Response(
                                 {"error": "Cannot update feature: geometry falls outside your organisation's allowed GND area."},
                                 status=400
                             )
-                    updated_instance.gnd_id = containing_gnd.gid
-                    updated_instance.save(update_fields=['gnd_id'])
+                    instance.gnd_id = containing_gnd.gid
+                    fields_to_save.append('gnd_id')
                 except Exception:
                     raise
 
-            # Check if any of the specific fields were updated
-            updated_instance = self.get_object()  # Get the instance with updated values
-            
+            # Single DB write for all post-update field changes
+            instance.save(update_fields=list(set(fields_to_save)))
+
+            # History: compare using the already-refreshed instance (no extra get_object())
             new_data = {
-                "user_id": updated_instance.user_id,
-                "layer_id": updated_instance.layer_id,
-                "calculated_area": updated_instance.calculated_area,
-                "reference_coordinate": updated_instance.reference_coordinate,
-                "geom": updated_instance.geom,
-                "status": updated_instance.status,
+                "user_id": instance.user_id,
+                "layer_id": instance.layer_id,
+                "calculated_area": instance.calculated_area,
+                "reference_coordinate": instance.reference_coordinate,
+                "geom": instance.geom,
+                "status": instance.status,
                 "ref_id": instance.ref_id,
             }
 
-            if old_data != new_data:  # Compare old and new data
+            if old_data != new_data:
                 Survey_Rep_Geom_History_Model.objects.create(
-                    su_id=updated_instance.id,
-                    user_id=updated_instance.user_id,
-                    layer_id=updated_instance.layer_id,
-                    calculated_area=updated_instance.calculated_area,
-                    reference_coordinate=updated_instance.reference_coordinate,
-                    geom=updated_instance.geom,
-                    status=updated_instance.status,
-                    ref_id=updated_instance.ref_id,
+                    su_id=instance.id,
+                    user_id=instance.user_id,
+                    layer_id=instance.layer_id,
+                    calculated_area=instance.calculated_area,
+                    reference_coordinate=instance.reference_coordinate,
+                    geom=instance.geom,
+                    status=instance.status,
+                    ref_id=instance.ref_id,
                 )
 
-            # Refresh the instance to include the latest data
-            updated_instance.refresh_from_db()
-
-            # Serialize and return the updated instance
-            serializer = self.get_serializer(updated_instance)
-
-            return Response(serializer.data, status=200)
+            # Return lean response — no geometry re-serialization (mirrors save view)
+            return Response({
+                "type": "Feature",
+                "geometry": None,
+                "properties": {
+                    "id": instance.id,
+                    "su_id": instance.id,
+                    "uuid": str(instance.uuid),
+                    "gnd_id": instance.gnd_id,
+                    "calculated_area": float(instance.calculated_area) if instance.calculated_area is not None else None,
+                    "layer_id": instance.layer_id,
+                    "status": instance.status,
+                    "parent_id": instance.parent_id,
+                    "date_modified": instance.date_modified.isoformat() if instance.date_modified else None,
+                },
+            }, status=200)
 
 #------------------------ Bulk DELETE by IDs ----------------------------------
 class Survey_Rep_DATA_BulkDelete_id_View(APIView):
@@ -565,29 +581,8 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def delete_record_and_related(self, request, su_id):
-        user = request.user
-        user_id = user.id
-
-        user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
-        if not user_roles.exists():
-            return Response({"error": "User has no assigned roles."}, status=403)
-
-        role_id = user_roles.values_list('role_id', flat=True).first()
-
-        # 🔐 Step 1: Check if user has delete permission
-
-        del_permission_id = 201
-
-        has_permission = Role_Permission_Model.objects.filter(
-            role_id=role_id,
-            permission_id=del_permission_id,
-            delete=True
-        ).exists()
-
-        if not has_permission:
-            return Response({"error": "You do not have delete permission."}, status=403)
-
+    def delete_record_and_related(self, su_id):
+        """Delete a single survey record and its related data. Permission must be verified before calling."""
         total_deleted = 0
         parent_ids = []
 
@@ -618,6 +613,25 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
         if not isinstance(su_ids, list) or not su_ids:
             return Response({"error": "Please provide a list of ids to delete."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # 🔐 Permission check once — not repeated per record
+        user = request.user
+        user_id = user.id
+
+        user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
+        if not user_roles.exists():
+            return Response({"error": "User has no assigned roles."}, status=403)
+
+        role_id = user_roles.values_list('role_id', flat=True).first()
+
+        has_permission = Role_Permission_Model.objects.filter(
+            role_id=role_id,
+            permission_id=201,
+            delete=True
+        ).exists()
+
+        if not has_permission:
+            return Response({"error": "You do not have delete permission."}, status=403)
+
         total_deleted = 0
         deleted_ids = set()
         parent_ids_to_update = set()
@@ -626,12 +640,7 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
             if su_id in deleted_ids:
                 continue
 
-            # Pass request to the method
-            result = self.delete_record_and_related(request, su_id)
-            if isinstance(result, Response):  # permission denied
-                return result
-
-            deleted, parent_ids = result
+            deleted, parent_ids = self.delete_record_and_related(su_id)
             total_deleted += deleted
             deleted_ids.add(su_id)
 
@@ -640,11 +649,7 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
                 siblings = Survey_Rep_DATA_Model.objects.filter(parent_id__contains=[parent_id])
                 for sibling in siblings:
                     if sibling.id not in deleted_ids:
-                        d_result = self.delete_record_and_related(request, sibling.id)
-                        if isinstance(d_result, Response):  # permission denied
-                            return d_result
-
-                        d, _ = d_result
+                        d, _ = self.delete_record_and_related(sibling.id)
                         total_deleted += d
                         deleted_ids.add(sibling.id)
 
