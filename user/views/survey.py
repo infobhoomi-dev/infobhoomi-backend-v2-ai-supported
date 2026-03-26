@@ -22,7 +22,7 @@ from django.core.files.base import ContentFile
 from django.contrib.gis.geos import GEOSGeometry
 from django.contrib.gis.db.models.functions import Area, Intersection as GeoIntersection
 
-import json, os, time
+import json, os, time, logging
 from datetime import timedelta
 
 import user
@@ -388,11 +388,18 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
 
     def update(self, request, *args, **kwargs):
 
+        import copy as _copy
+        logger = logging.getLogger('survey_rep_update')
+
+        _t_start = time.perf_counter()
         data = request.data
         user = request.user
         user_id = user.id
+        feature_id = kwargs.get('pk', '?')
+        logger.debug(f"[UPDATE⏱] ── PATCH id={feature_id} user_id={user_id}")
 
         # 🔐 Step 1: Check if user has edit permission
+        _t = time.perf_counter()
         edit_permission_id = 201
 
         user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
@@ -409,15 +416,18 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
 
         if not has_permission:
             return Response({"error": "You do not have permission."}, status=403)
-        
-        # Fetch org area once — reused in both polygon and point/line GND branches
-        org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
+        logger.debug(f"[UPDATE⏱] Step 1 — permission check: {(time.perf_counter()-_t)*1000:.1f}ms")
 
-        import copy as _copy
+        # Step 2: Fetch org area once — reused in both polygon and point/line GND branches
+        _t = time.perf_counter()
+        org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
+        logger.debug(f"[UPDATE⏱] Step 2 — org area fetch: {(time.perf_counter()-_t)*1000:.1f}ms")
 
         with transaction.atomic():
-            # Single get_object() — snapshot old data before mutation
+            # Step 3: Fetch instance + snapshot old data
+            _t = time.perf_counter()
             instance = self.get_object()
+            logger.debug(f"[UPDATE⏱] Step 3 — get_object(): {(time.perf_counter()-_t)*1000:.1f}ms | geom_type={instance.geom_type} layer_id={instance.layer_id}")
 
             old_data = {
                 "user_id": instance.user_id,
@@ -442,18 +452,22 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                 _mutable.setdefault('properties', {})['gnd_id'] = instance.gnd_id
                 request._full_data = _mutable
 
-            # Proceed with the default update logic (calls get_object() internally)
+            # Step 4: DRF serializer validate + write geometry to DB
+            _t = time.perf_counter()
             super().update(request, *args, **kwargs)
+            logger.debug(f"[UPDATE⏱] Step 4 — serializer validate + DB write (super().update): {(time.perf_counter()-_t)*1000:.1f}ms")
 
-            # Single refresh after super().update() — replaces the 3 separate
-            # get_object() calls that were scattered through the post-update logic.
+            # Step 5: Refresh instance with what was just written
+            _t = time.perf_counter()
             instance.refresh_from_db()
+            logger.debug(f"[UPDATE⏱] Step 5 — refresh_from_db: {(time.perf_counter()-_t)*1000:.1f}ms")
 
             # Accumulate all post-update field changes; flush with one save() at end.
             fields_to_save = ['date_modified']
             instance.date_modified = now()
 
-            # Recalculate calculated_area from updated geometry
+            # Step 6: Recalculate area/length from updated geometry
+            _t = time.perf_counter()
             if instance.geom:
                 _crs = instance.reference_coordinate or "EPSG:4326"
                 try:
@@ -468,8 +482,10 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                 else:
                     instance.calculated_area = 0
                 fields_to_save.append('calculated_area')
+            logger.debug(f"[UPDATE⏱] Step 6 — area/length recalculation: {(time.perf_counter()-_t)*1000:.1f}ms")
 
-            # Re-enforce gnd_id after geometry update
+            # Step 7: GND detection after geometry update
+            _t = time.perf_counter()
             if instance.geom_type in ["polygon", "multipolygon"] and instance.geom:
                 layer_id_val = instance.layer_id
                 is_land_parcel = layer_id_val in [1, 6]
@@ -478,6 +494,7 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                         # Fast path: centroid point-in-polygon (uses spatial index, no area computation)
                         centroid = instance.geom.centroid
                         dominant_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=centroid).first()
+                        _gnd_path = 'centroid'
                         if not dominant_gnd:
                             # Slow fallback: parcel straddles a GND boundary — find dominant by intersection area
                             dominant_gnd = (
@@ -487,6 +504,8 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                                 .order_by('-inter_area')
                                 .first()
                             )
+                            _gnd_path = 'intersection-fallback'
+                    logger.debug(f"[UPDATE⏱] Step 7 — GND detect ({_gnd_path}) → gnd={dominant_gnd.gid if dominant_gnd else None}: {(time.perf_counter()-_t)*1000:.1f}ms")
                     if not dominant_gnd:
                         if is_land_parcel:
                             return Response(
@@ -508,6 +527,7 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                             instance.gnd_id = dominant_gnd.gid
                             fields_to_save.append('gnd_id')
                 except Exception:
+                    logger.debug(f"[UPDATE⏱] Step 7 — GND detect exception after {(time.perf_counter()-_t)*1000:.1f}ms", exc_info=True)
                     if is_land_parcel:
                         raise
 
@@ -516,6 +536,7 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                     with transaction.atomic():
                         lookup_point = instance.geom.centroid
                         containing_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=lookup_point).first()
+                    logger.debug(f"[UPDATE⏱] Step 7 — GND detect (centroid point/line) → gnd={containing_gnd.gid if containing_gnd else None}: {(time.perf_counter()-_t)*1000:.1f}ms")
                     if not containing_gnd:
                         return Response(
                             {"error": "Cannot update feature: geometry does not fall within any GND boundary."},
@@ -530,12 +551,18 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                     instance.gnd_id = containing_gnd.gid
                     fields_to_save.append('gnd_id')
                 except Exception:
+                    logger.debug(f"[UPDATE⏱] Step 7 — GND detect exception after {(time.perf_counter()-_t)*1000:.1f}ms", exc_info=True)
                     raise
+            else:
+                logger.debug(f"[UPDATE⏱] Step 7 — GND detect skipped (no geom): 0.0ms")
 
-            # Single DB write for all post-update field changes
+            # Step 8: Single DB write for all post-update field changes
+            _t = time.perf_counter()
             instance.save(update_fields=list(set(fields_to_save)))
+            logger.debug(f"[UPDATE⏱] Step 8 — save({fields_to_save}): {(time.perf_counter()-_t)*1000:.1f}ms")
 
-            # History: compare using the already-refreshed instance (no extra get_object())
+            # Step 9: History comparison + optional INSERT
+            _t = time.perf_counter()
             new_data = {
                 "user_id": instance.user_id,
                 "layer_id": instance.layer_id,
@@ -546,6 +573,7 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                 "ref_id": instance.ref_id,
             }
 
+            history_written = False
             if old_data != new_data:
                 Survey_Rep_Geom_History_Model.objects.create(
                     su_id=instance.id,
@@ -557,6 +585,10 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                     status=instance.status,
                     ref_id=instance.ref_id,
                 )
+                history_written = True
+            logger.debug(f"[UPDATE⏱] Step 9 — history write (written={history_written}): {(time.perf_counter()-_t)*1000:.1f}ms")
+
+            logger.debug(f"[UPDATE⏱] ══ TOTAL: {(time.perf_counter()-_t_start)*1000:.1f}ms | id={feature_id} ══")
 
             # Return lean response — no geometry re-serialization (mirrors save view)
             return Response({
@@ -581,39 +613,57 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def delete_record_and_related(self, su_id):
+    def delete_record_and_related(self, su_id, logger):
         """Delete a single survey record and its related data. Permission must be verified before calling."""
+        _t = time.perf_counter()
         total_deleted = 0
         parent_ids = []
 
         try:
             primary = Survey_Rep_DATA_Model.objects.get(id=su_id)
             parent_ids = primary.parent_id or []
+            _t2 = time.perf_counter()
+            logger.debug(f"[DELETE⏱]   fetch record id={su_id}: {(_t2-_t)*1000:.1f}ms")
 
             # Delete LA_Spatial_Unit_Model for this su_id
-            total_deleted += LA_Spatial_Unit_Model.objects.filter(su_id=su_id).delete()[0]
+            _t2 = time.perf_counter()
+            n = LA_Spatial_Unit_Model.objects.filter(su_id=su_id).delete()[0]
+            total_deleted += n
+            logger.debug(f"[DELETE⏱]   DELETE LA_Spatial_Unit (n={n}): {(time.perf_counter()-_t2)*1000:.1f}ms")
 
             # Delete ref_id-related Survey_Rep_DATA_Model and LA_Spatial_Unit_Model
+            _t2 = time.perf_counter()
             ref_qs = Survey_Rep_DATA_Model.objects.filter(ref_id=su_id)
             ref_ids = list(ref_qs.values_list("id", flat=True))
-            total_deleted += ref_qs.delete()[0]
-            total_deleted += LA_Spatial_Unit_Model.objects.filter(su_id__in=ref_ids).delete()[0]
+            n_ref = ref_qs.delete()[0]
+            n_ref_su = LA_Spatial_Unit_Model.objects.filter(su_id__in=ref_ids).delete()[0]
+            total_deleted += n_ref + n_ref_su
+            logger.debug(f"[DELETE⏱]   DELETE ref children (survey={n_ref}, spatial_units={n_ref_su}): {(time.perf_counter()-_t2)*1000:.1f}ms")
 
             # Delete the main record
+            _t2 = time.perf_counter()
             primary.delete()
             total_deleted += 1
+            logger.debug(f"[DELETE⏱]   DELETE primary record id={su_id}: {(time.perf_counter()-_t2)*1000:.1f}ms")
 
         except Survey_Rep_DATA_Model.DoesNotExist:
-            pass
+            logger.debug(f"[DELETE⏱]   id={su_id} not found — skipped")
 
+        logger.debug(f"[DELETE⏱]   record id={su_id} total: {(time.perf_counter()-_t)*1000:.1f}ms | rows_deleted={total_deleted}")
         return total_deleted, parent_ids
 
     def delete(self, request):
+        logger = logging.getLogger('survey_rep_delete')
+        _t_start = time.perf_counter()
+
         su_ids = request.data.get('ids', [])
         if not isinstance(su_ids, list) or not su_ids:
             return Response({"error": "Please provide a list of ids to delete."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 🔐 Permission check once — not repeated per record
+        logger.debug(f"[DELETE⏱] ── DELETE request | ids={su_ids}")
+
+        # 🔐 Step 1: Permission check once — not repeated per record
+        _t = time.perf_counter()
         user = request.user
         user_id = user.id
 
@@ -631,35 +681,46 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
 
         if not has_permission:
             return Response({"error": "You do not have delete permission."}, status=403)
+        logger.debug(f"[DELETE⏱] Step 1 — permission check: {(time.perf_counter()-_t)*1000:.1f}ms")
 
         total_deleted = 0
         deleted_ids = set()
         parent_ids_to_update = set()
 
+        # Step 2: Delete each requested record
         for su_id in su_ids:
             if su_id in deleted_ids:
                 continue
 
-            deleted, parent_ids = self.delete_record_and_related(su_id)
+            logger.debug(f"[DELETE⏱] Step 2 — processing id={su_id}")
+            deleted, parent_ids = self.delete_record_and_related(su_id, logger)
             total_deleted += deleted
             deleted_ids.add(su_id)
 
+            # Step 3: Resolve and delete siblings
             if len(parent_ids) == 1:
                 parent_id = parent_ids[0]
+                _t = time.perf_counter()
                 siblings = Survey_Rep_DATA_Model.objects.filter(parent_id__contains=[parent_id])
-                for sibling in siblings:
-                    if sibling.id not in deleted_ids:
-                        d, _ = self.delete_record_and_related(sibling.id)
-                        total_deleted += d
-                        deleted_ids.add(sibling.id)
+                sibling_ids = [s.id for s in siblings if s.id not in deleted_ids]
+                logger.debug(f"[DELETE⏱] Step 3 — sibling query (parent_id={parent_id}, found={len(sibling_ids)}): {(time.perf_counter()-_t)*1000:.1f}ms")
+                for sib_id in sibling_ids:
+                    d, _ = self.delete_record_and_related(sib_id, logger)
+                    total_deleted += d
+                    deleted_ids.add(sib_id)
 
                 parent_ids_to_update.add(parent_id)
 
             elif len(parent_ids) > 1:
                 parent_ids_to_update.update(parent_ids)
 
+        # Step 4: Restore parent status
         if parent_ids_to_update:
+            _t = time.perf_counter()
             Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids_to_update).update(status=True)
+            logger.debug(f"[DELETE⏱] Step 4 — restore parent status (ids={list(parent_ids_to_update)}): {(time.perf_counter()-_t)*1000:.1f}ms")
+
+        logger.debug(f"[DELETE⏱] ══ TOTAL: {(time.perf_counter()-_t_start)*1000:.1f}ms | deleted_ids={list(deleted_ids)} rows={total_deleted} ══")
 
         return Response(
             {"message": f"Records deleted. {total_deleted} total record(s) affected."},

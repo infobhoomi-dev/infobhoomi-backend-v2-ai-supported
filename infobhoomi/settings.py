@@ -244,5 +244,15 @@ LOGGING = {
             'level': 'DEBUG',
             'propagate': False,
         },
+        'survey_rep_update': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'survey_rep_delete': {
+            'handlers': ['console'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
     },
 }
