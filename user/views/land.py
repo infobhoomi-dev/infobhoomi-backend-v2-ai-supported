@@ -304,8 +304,8 @@ class Lnd_Admin_Info_Update_View(APIView):
                         return Response(serializer.errors, status=400)
 
             # --- Assessment_Model update ---
-            assessment_unit = Assessment_Model.objects.filter(su_id=su_id).first()
-            if assessment_unit and "ass_div" in filtered_data:
+            if "ass_div" in filtered_data:
+                assessment_unit, _ = Assessment_Model.objects.get_or_create(su_id_id=su_id)
                 original_data = assessment_unit.__dict__.copy()
                 serializer = Assessment_Serializer(assessment_unit, data={"ass_div": filtered_data["ass_div"]}, partial=True)
                 if serializer.is_valid():

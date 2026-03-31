@@ -131,9 +131,12 @@ class Survey_Rep_DATA_Save_View(APIView):
                         _srid = int(_crs.split(":")[-1]) if _crs else 4326
                     except (ValueError, AttributeError):
                         _srid = 4326
-                    # Parse in WGS84 first (needed for spatial queries); keep a reference for GND detection
-                    _geom_obj_4326 = GEOSGeometry(json.dumps(_geom_json), srid=_srid if _srid == 4326 else 4326)
-                    _geom_obj = _geom_obj_4326.transform(5235, clone=True) if _srid in [4326, 4269, 4230] else GEOSGeometry(json.dumps(_geom_json), srid=_srid)
+                    # Parse once with the actual SRID declared by the client
+                    _geom_obj_native = GEOSGeometry(json.dumps(_geom_json), srid=_srid)
+                    # WGS84 reference — needed for GND spatial queries (PostGIS spatial index is in EPSG:4326)
+                    _geom_obj_4326 = _geom_obj_native.transform(4326, clone=True) if _srid != 4326 else _geom_obj_native
+                    # Project to EPSG:5235 (Sri Lanka 1999, metric) for accurate area/length in square metres
+                    _geom_obj = _geom_obj_native.transform(5235, clone=True)
                     if geom_type in ["polygon", "multipolygon"]:
                         item["properties"]["calculated_area"] = round(_geom_obj.area, 4)
                     elif geom_type in ["linestring", "multilinestring"]:
@@ -235,21 +238,22 @@ class Survey_Rep_DATA_Save_View(APIView):
                         Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids).update(status=False)
                     logger.debug(f"[SAVE⏱]   Parent ID lookup + status update: {(time.perf_counter()-_t)*1000:.1f}ms")
 
+                    # Inject the already-parsed GEOSGeometry so GeometryField.to_internal_value
+                    # hits its isinstance(value, GEOSGeometry) short-circuit and skips re-parsing.
+                    item["geometry"] = _geom_obj_native
                     _t = time.perf_counter()
                     serializer = self.serializer_class(data=item)
                     serializer_valid = serializer.is_valid()
-                    logger.debug(f"[SAVE⏱]   Serializer validation (incl. geom parse): {(time.perf_counter()-_t)*1000:.1f}ms")
+                    logger.debug(f"[SAVE⏱]   Serializer validation (geom pre-injected, no re-parse): {(time.perf_counter()-_t)*1000:.1f}ms")
 
                     if serializer_valid:
                         _t = time.perf_counter()
-                        # Save Survey_Rep_DATA_Model instance
+                        # Save Survey_Rep_DATA_Model instance.
+                        # trg_survey_rep_su_id (BEFORE INSERT trigger) sets su_id = id
+                        # at the DB level — no second UPDATE round-trip needed.
                         survey_rep = serializer.save()
-                        _t_insert = time.perf_counter()
-                        logger.debug(f"[SAVE⏱]   serializer.save() only: {(_t_insert-_t)*1000:.1f}ms")
-                        # Set su_id_id to self (self-referential FK) in one UPDATE
-                        survey_rep.su_id_id = survey_rep.id
-                        survey_rep.save(update_fields=['su_id_id'])
-                        logger.debug(f"[SAVE⏱]   INSERT survey_rep + su_id UPDATE: {(time.perf_counter()-_t)*1000:.1f}ms")
+                        survey_rep.su_id_id = survey_rep.id  # sync Python object only
+                        logger.debug(f"[SAVE⏱]   INSERT survey_rep (su_id set by trigger): {(time.perf_counter()-_t)*1000:.1f}ms")
 
                         # Batch all related object creation into bulk_create lists
                         geom_history_objs = [Survey_Rep_Geom_History_Model(
@@ -266,44 +270,13 @@ class Survey_Rep_DATA_Save_View(APIView):
                         logger.debug(f"[SAVE⏱]   Geom history INSERT: {(time.perf_counter()-_t)*1000:.1f}ms")
 
                         _t = time.perf_counter()
-                        # Create LA_Spatial_Unit_Model instance (needed as FK for related models)
-                        suID = LA_Spatial_Unit_Model.objects.create(su_id=survey_rep.id)
-
-                        # Batch all layer-specific model inserts into a single bulk_create per model class
-                        is_polygon = survey_rep.geom_type in ["multipolygon", "polygon"]
-                        is_line_point = survey_rep.geom_type in ["linestring", "point"]
-
-                        if survey_rep.layer_id in [1, 3, 6, 12] and is_polygon:
-                            Assessment_Model.objects.bulk_create([Assessment_Model(su_id=suID, user_id=user.id)])
-                            Tax_Info_Model.objects.bulk_create([Tax_Info_Model(su_id=suID)])
-
-                        if survey_rep.layer_id in [3, 12] and is_polygon:
-                            LA_SP_Fire_Rescue_Model.objects.bulk_create([LA_SP_Fire_Rescue_Model(su_id=suID)])
-
-                        if survey_rep.layer_id in [1, 6]:
-                            LA_LS_Land_Unit_Model.objects.bulk_create([LA_LS_Land_Unit_Model(su_id=suID)])
-                            LA_LS_Utinet_LU_Model.objects.bulk_create([LA_LS_Utinet_LU_Model(su_id=suID)])
-
-                        if survey_rep.layer_id in [2, 4, 5, 8, 9, 11]:
-                            if is_polygon:
-                                LA_LS_Ols_Polygon_Unit_Model.objects.bulk_create([LA_LS_Ols_Polygon_Unit_Model(su_id=suID)])
-                            elif is_line_point:
-                                LA_LS_Ols_PointLine_Unit_Model.objects.bulk_create([LA_LS_Ols_PointLine_Unit_Model(su_id=suID)])
-
-                        if survey_rep.layer_id == 3:
-                            LA_LS_Build_Unit_Model.objects.bulk_create([LA_LS_Build_Unit_Model(su_id=suID)])
-                            LA_LS_Utinet_BU_Model.objects.bulk_create([LA_LS_Utinet_BU_Model(su_id=suID)])
-
-                        if survey_rep.layer_id == 7:
-                            LA_LS_Ols_Polygon_Unit_Model.objects.bulk_create([LA_LS_Ols_Polygon_Unit_Model(su_id=suID)])
-                            LA_LS_Utinet_Ols_Model.objects.bulk_create([LA_LS_Utinet_Ols_Model(su_id=suID)])
-
-                        if survey_rep.layer_id in my_layerIDs:
-                            if is_polygon:
-                                LA_LS_MyLayer_Polygon_Unit_Model.objects.bulk_create([LA_LS_MyLayer_Polygon_Unit_Model(su_id=suID)])
-                            elif is_line_point:
-                                LA_LS_MyLayer_PointLine_Unit_Model.objects.bulk_create([LA_LS_MyLayer_PointLine_Unit_Model(su_id=suID)])
-                        logger.debug(f"[SAVE⏱]   Related model INSERTs (spatial unit + layer models): {(time.perf_counter()-_t)*1000:.1f}ms")
+                        # Create the LADM spatial unit anchor — required immediately so that
+                        # land/building detail views can look it up via FK.
+                        # All other detail records (Assessment, Tax_Info, Land_Unit, etc.) are
+                        # created lazily by their respective update views on first edit, avoiding
+                        # empty placeholder rows for parcels that are never annotated.
+                        LA_Spatial_Unit_Model.objects.create(su_id=survey_rep.id)
+                        logger.debug(f"[SAVE⏱]   Spatial unit INSERT: {(time.perf_counter()-_t)*1000:.1f}ms")
                         logger.debug(f"[SAVE⏱] ── Feature [{index}] total: {(time.perf_counter()-_t_feat)*1000:.1f}ms")
 
                         # Return only the fields the frontend needs to update feature IDs/metadata.

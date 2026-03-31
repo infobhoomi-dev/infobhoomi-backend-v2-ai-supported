@@ -8,7 +8,7 @@ Connects to the local PostgreSQL DB and for every table:
   4. Outputs a JSON report + a summary CSV
 
 Run from the backend root:
-    venv\Scripts\python.exe audit_tables.py
+    venv\\Scripts\\python.exe audit_tables.py
 
 Output files:
     audit_report.json   — full detail per table
@@ -36,12 +36,12 @@ DB = dict(
     password="POST@info#box2024",
 )
 
-# ── Source files to cross-reference ───────────────────────────────────────
+# ── Source directories to cross-reference ─────────────────────────────────
 BASE = os.path.dirname(__file__)
-SOURCE_FILES = {
-    "models":      os.path.join(BASE, "user", "models.py"),
-    "serializers": os.path.join(BASE, "user", "serializers.py"),
-    "views":       os.path.join(BASE, "user", "views.py"),
+SOURCE_DIRS = {
+    "models":      os.path.join(BASE, "user", "models"),
+    "serializers": os.path.join(BASE, "user", "serializers"),
+    "views":       os.path.join(BASE, "user", "views"),
 }
 
 # Tables to skip (Django internals, PostGIS metadata, auth framework)
@@ -56,13 +56,26 @@ SKIP_TABLES = {
 # ── Load source files once ────────────────────────────────────────────────
 def load_sources():
     sources = {}
-    for key, path in SOURCE_FILES.items():
-        try:
-            with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                sources[key] = f.read()
-        except FileNotFoundError:
-            print(f"  WARNING: {path} not found — skipping code cross-check for {key}")
-            sources[key] = ""
+    for key, dirpath in SOURCE_DIRS.items():
+        parts = []
+        if os.path.isdir(dirpath):
+            for fname in sorted(os.listdir(dirpath)):
+                if fname.endswith(".py") and not fname.startswith("backup"):
+                    fpath = os.path.join(dirpath, fname)
+                    try:
+                        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                            parts.append(f.read())
+                    except Exception as e:
+                        print(f"  WARNING: could not read {fpath}: {e}")
+        else:
+            # Fallback: try single file (legacy layout)
+            fpath = dirpath + ".py"
+            if os.path.isfile(fpath):
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    parts.append(f.read())
+            else:
+                print(f"  WARNING: {dirpath} not found — skipping cross-check for {key}")
+        sources[key] = "\n".join(parts)
     return sources
 
 def col_in_source(col_name, source_text):

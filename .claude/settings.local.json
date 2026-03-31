@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python audit_tables.py)",
+      "Bash(venv/Scripts/python.exe audit_tables.py)"
+    ]
+  }
+}

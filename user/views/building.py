@@ -284,8 +284,8 @@ class Bld_Admin_Info_Update_View(APIView):
                             "no_floors", "wall_type", "registration_date", "construction_year", "structure_type", "condition"}
             build_update_data = {k: v for k, v in filtered_data.items() if k in build_fields}
 
-            build_unit = LA_LS_Build_Unit_Model.objects.filter(su_id=su_id).first()
-            if build_unit and build_update_data:
+            build_unit, _ = LA_LS_Build_Unit_Model.objects.get_or_create(su_id_id=su_id)
+            if build_update_data:
                 original = build_unit.__dict__.copy()
                 serializer = LA_LS_Build_Unit_Serializer(build_unit, data=build_update_data, partial=True)
                 if serializer.is_valid():
@@ -298,15 +298,14 @@ class Bld_Admin_Info_Update_View(APIView):
 
             # 5. Update Assessment_Model
             if "ass_div" in filtered_data:
-                assessment_unit = Assessment_Model.objects.filter(su_id=su_id).first()
-                if assessment_unit:
-                    original = assessment_unit.__dict__.copy()
-                    serializer = Assessment_Serializer(assessment_unit, data={"ass_div": filtered_data["ass_div"]}, partial=True)
-                    if serializer.is_valid():
-                        serializer.save()
-                        self.log_changes(user_id, category, su_id, original, serializer.validated_data)
-                    else:
-                        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                assessment_unit, _ = Assessment_Model.objects.get_or_create(su_id_id=su_id)
+                original = assessment_unit.__dict__.copy()
+                serializer = Assessment_Serializer(assessment_unit, data={"ass_div": filtered_data["ass_div"]}, partial=True)
+                if serializer.is_valid():
+                    serializer.save()
+                    self.log_changes(user_id, category, su_id, original, serializer.validated_data)
+                else:
+                    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
             # 6. Update Survey_Rep_DATA_Model
             if "gnd_id" in filtered_data:
@@ -440,8 +439,8 @@ class Bld_Overview_Update_View(APIView):
 
             role_id = user_roles.values_list("role_id", flat=True).first()
 
-            # Step 2: Get related build unit
-            build_unit = LA_LS_Build_Unit_Model.objects.filter(su_id=su_id).first()
+            # Step 2: Get or create related build unit
+            build_unit, _ = LA_LS_Build_Unit_Model.objects.get_or_create(su_id_id=su_id)
 
             # Step 3: Define permission map (edit-only)
             FIELD_PERMISSION_MAP = {
@@ -468,7 +467,7 @@ class Bld_Overview_Update_View(APIView):
             # Step 6: Apply build_unit update (area goes to survey_rep below)
             build_unit_fields = {"ext_builduse_type", "ext_builduse_sub_type", "roof_type", "wall_type"}
             build_update = {k: v for k, v in update_data.items() if k in build_unit_fields}
-            if build_unit and build_update:
+            if build_update:
                 original_data = build_unit.__dict__.copy()
                 serializer = LA_LS_Build_Unit_Serializer(build_unit, data=build_update, partial=True)
                 if serializer.is_valid():
@@ -619,10 +618,8 @@ class Bld_Utility_Network_Info_Update_View(APIView):
             if not update_data:
                 return Response({"detail": "Nothing to update."}, status=200)
 
-            # Step 5: Get utility network record
-            instance = LA_LS_Utinet_BU_Model.objects.filter(su_id=su_id).first()
-            if not instance:
-                return Response({"error": "No data found for the given su_id."}, status=status.HTTP_404_NOT_FOUND)
+            # Step 5: Get or create utility network record
+            instance, _ = LA_LS_Utinet_BU_Model.objects.get_or_create(su_id_id=su_id)
 
             # Step 6: Update utility data
             original_data = instance.__dict__.copy()
