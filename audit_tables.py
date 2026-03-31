@@ -76,6 +76,24 @@ def load_sources():
             else:
                 print(f"  WARNING: {dirpath} not found — skipping cross-check for {key}")
         sources[key] = "\n".join(parts)
+
+    # Expand view source: views use `serializer_class = XSerializer` rather than
+    # listing field names directly.  Append each referenced serializer's source text
+    # to the view source so `col_in_source` can find fields through the indirection.
+    serializer_classes = re.findall(
+        r'serializer_class\s*=\s*(\w+)', sources.get("views", "")
+    )
+    for cls in set(serializer_classes):
+        # Find the serializer class body in the serializer source and append it
+        # to the view blob so its field names become visible to the audit.
+        pattern = re.compile(
+            r'class\s+' + re.escape(cls) + r'\b.*?(?=\nclass\s|\Z)',
+            re.DOTALL
+        )
+        m = pattern.search(sources.get("serializers", ""))
+        if m:
+            sources["views"] += "\n" + m.group(0)
+
     return sources
 
 def build_db_column_aliases(model_source):
