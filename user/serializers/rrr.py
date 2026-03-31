@@ -61,7 +61,15 @@ class LA_Spatial_Unit_Serializer(serializers.ModelSerializer):
 class LA_LS_Land_Unit_Serializer(serializers.ModelSerializer):
     class Meta:
         model = LA_LS_Land_Unit_Model
-        fields = '__all__'
+        fields = [
+            'id', 'su_id',
+            'access_road', 'postal_ad_lnd', 'local_auth',
+            'ext_landuse_type', 'ext_landuse_sub_type', 'sl_land_type',
+            'land_name', 'registration_date', 'tenure_type',
+            'adjacent_parcels', 'parent_parcel', 'child_parcels', 'part_of_estate',
+            'area', 'perimeter', 'dimension_2d_3d', 'boundary_type', 'crs',
+            'status',
+        ]
 
 #_______________________________________________ LA_LS_Zoning Serializer _________________________________________
 class LA_LS_Zoning_Serializer(serializers.ModelSerializer):
@@ -85,10 +93,10 @@ class LA_BAUnit_SpatialUnit_Serializer(serializers.ModelSerializer):
 class LA_RRR_Restriction_Serializer(serializers.ModelSerializer):
     class Meta:
         model = LA_RRR_Restriction_Model
-        fields = '__all__'
+        fields = ['id', 'ba_unit_id', 'rrr_restriction_type', 'description', 'time_begin', 'time_end']
 
 #_______________________________________________ LA_RRR_Responsibility Serializer _________________________________
 class LA_RRR_Responsibility_Serializer(serializers.ModelSerializer):
     class Meta:
         model = LA_RRR_Responsibility_Model
-        fields = '__all__'
+        fields = ['id', 'ba_unit_id', 'rrr_responsibility_type', 'description', 'time_begin', 'time_end']

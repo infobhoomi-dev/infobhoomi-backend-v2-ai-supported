@@ -78,10 +78,68 @@ def load_sources():
         sources[key] = "\n".join(parts)
     return sources
 
-def col_in_source(col_name, source_text):
-    """True if the column name appears as a word in the source text."""
-    pattern = r'\b' + re.escape(col_name) + r'\b'
-    return bool(re.search(pattern, source_text, re.IGNORECASE))
+def build_db_column_aliases(model_source):
+    """
+    Scan model source for db_column='...' declarations and build a reverse mapping:
+        db_column_name -> django_field_name
+
+    This handles cases like:
+        ref_id = models.IntegerField(null=True, db_column='ref_ids')
+        gnd_id = models.IntegerField(null=False, db_column='gndid')
+
+    where the serializer lists the Django field name ('ref_id') but the DB column
+    is named differently ('ref_ids'), causing false "not in serializer" flags.
+
+    Uses line-by-line parsing. The line must look like a real field definition:
+        <indent> field_name = models.FieldClass(
+    i.e. models.<UppercaseName>( to distinguish from kwargs like on_delete=models.CASCADE.
+    db_column must also appear on the same line as the field assignment.
+    """
+    aliases = {}
+    # Matches: <indent>field_name = models.UpperCaseFieldClass( ...
+    field_def_re = re.compile(
+        r'^\s{0,12}(\w+)\s*=\s*(?:models|gismodels)\.[A-Z]\w+\s*\('
+    )
+    db_col_re = re.compile(r'db_column\s*=\s*[\'"](\w+)[\'"]')
+
+    # Collect all field names used directly in models (no db_column alias).
+    # re.MULTILINE is required so ^ matches start of each line, not just the string.
+    field_names_used = set(re.findall(
+        r'^\s{0,12}(\w+)\s*=\s*(?:models|gismodels)\.[A-Z]\w+\s*\(',
+        model_source, re.MULTILINE
+    ))
+
+    for line in model_source.splitlines():
+        db_col_match = db_col_re.search(line)
+        if not db_col_match:
+            continue
+        db_col = db_col_match.group(1)
+        field_match = field_def_re.match(line)
+        if field_match:
+            field_name = field_match.group(1)
+            if db_col == field_name:
+                continue  # same name — no alias needed
+            # Skip if the db_col is also used as a direct field name somewhere —
+            # that makes the mapping ambiguous across tables (e.g. su_id is both
+            # a real field name and a db_column alias in different models).
+            if db_col in field_names_used:
+                continue
+            aliases[db_col] = field_name
+    return aliases
+
+
+def col_in_source(col_name, source_text, aliases=None):
+    """
+    True if col_name appears as a whole word in source_text, OR if col_name has a
+    known Django field alias (from build_db_column_aliases) that appears instead.
+    """
+    if re.search(r'\b' + re.escape(col_name) + r'\b', source_text, re.IGNORECASE):
+        return True
+    if aliases and col_name in aliases:
+        alias = aliases[col_name]
+        if re.search(r'\b' + re.escape(alias) + r'\b', source_text, re.IGNORECASE):
+            return True
+    return False
 
 # ── Priority scoring ──────────────────────────────────────────────────────
 def priority_score(null_pct, in_model, in_serializer, in_views, row_count):
@@ -130,6 +188,9 @@ def main():
 
     print("Loading source files…")
     sources = load_sources()
+    db_col_aliases = build_db_column_aliases(sources["models"])
+    if db_col_aliases:
+        print(f"  Resolved {len(db_col_aliases)} db_column alias(es): {db_col_aliases}")
 
     # Get all user tables
     cur.execute("""
@@ -193,10 +254,10 @@ def main():
                 null_pct = 100.0
                 null_count = 0
 
-            # Code cross-reference
-            in_model      = col_in_source(col_name, sources["models"])
-            in_serializer = col_in_source(col_name, sources["serializers"])
-            in_views      = col_in_source(col_name, sources["views"])
+            # Code cross-reference (aliases resolve db_column→field_name mismatches)
+            in_model      = col_in_source(col_name, sources["models"],      db_col_aliases)
+            in_serializer = col_in_source(col_name, sources["serializers"], db_col_aliases)
+            in_views      = col_in_source(col_name, sources["views"],       db_col_aliases)
 
             score, label = priority_score(
                 null_pct, in_model, in_serializer, in_views, row_count

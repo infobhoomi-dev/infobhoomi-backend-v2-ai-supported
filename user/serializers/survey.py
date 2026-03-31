@@ -13,7 +13,17 @@ class Survey_Rep_DATA_Serializer(GeoFeatureModelSerializer):
     class Meta:
         model = Survey_Rep_DATA_Model
         geo_field = 'geom'
-        fields = '__all__'
+        fields = [
+            'id', 'uuid', 'su_id',
+            'user_id', 'layer_id', 'org_id', 'gnd_id',
+            'geom_type', 'geom',
+            'calculated_area', 'legal_area', 'legal_area_unit',
+            'dimension_2d_3d', 'reference_coordinate',
+            'status', 'parent_id',
+            'ref_id',  # db_column='ref_ids'
+            'date_created', 'date_modified',
+            # original_code excluded — dropped in migration 0407
+        ]
         extra_kwargs = {
             # su_id is set by the view after the initial save (survey_rep.su_id_id = survey_rep.id)
             # so it must never be part of create/update validation.

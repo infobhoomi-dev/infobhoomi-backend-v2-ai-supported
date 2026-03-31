@@ -12,7 +12,15 @@ User = get_user_model()
 class Party_Serializer(serializers.ModelSerializer):
     class Meta:
         model = Party_Model
-        fields = '__all__'
+        fields = [
+            'pid', 'party_name', 'party_full_name',
+            'la_party_type', 'sl_party_type',
+            'ext_pid_type', 'ext_pid',
+            'pmt_address', 'tp', 'specific_tp',
+            'email', 'date_of_birth', 'gender',
+            'other_reg', 'remark',
+            'date_created', 'done_by',
+        ]
 
 #------------------------------------------------------------------------------
 class Party_Type_Serializer(serializers.ModelSerializer):
@@ -57,10 +65,15 @@ class LA_RRR_Serializer(serializers.ModelSerializer):
 
 #_______________________________________________ LA Administrative Serializer ____________________________________
 class LA_Admin_Source_Serializer(serializers.ModelSerializer):
-
     class Meta:
         model = LA_Admin_Source_Model
-        fields = '__all__'
+        fields = [
+            'admin_source_id', 'admin_source_type',
+            'reference_no', 'acceptance_date',
+            'exte_arch_ref', 'source_description',
+            'done_by', 'user_id', 'file_path',
+            'status', 'date_created',
+        ]
 
 #------------------------------------------------------------------------------ (pdf)
 class User_Admin_Source_Activity_Serializer(serializers.ModelSerializer):
