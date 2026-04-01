@@ -2,7 +2,22 @@
   "permissions": {
     "allow": [
       "Bash(python audit_tables.py)",
-      "Bash(venv/Scripts/python.exe audit_tables.py)"
+      "Bash(venv/Scripts/python.exe audit_tables.py)",
+      "Bash(venv/Scripts/python.exe manage.py check)",
+      "Bash(venv/Scripts/python.exe -c \":*)",
+      "Bash(venv/Scripts/python.exe manage.py*)",
+      "Bash(venv/Scripts/python.exe audit_tables.py*)",
+      "Bash(venv/Scripts/python.exe qa_runner.py*)",
+      "Bash(venv/Scripts/python.exe -c*)",
+      "Bash(python manage.py*)",
+      "Bash(python -c*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git pull*)"
     ]
   }
 }

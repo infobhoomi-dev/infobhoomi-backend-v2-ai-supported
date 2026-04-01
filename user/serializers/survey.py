@@ -39,7 +39,13 @@ class Survey_Rep_DATA_Serializer(GeoFeatureModelSerializer):
 # Only the fields the frontend actually reads — drops date_created, date_modified,
 # user_id, org_id, legal_area, legal_area_unit, dimension_2d_3d, reference_coordinate.
 # precision=6 ≈ 0.1 m accuracy — sufficient for rendering, reduces coordinate string size.
+#
+# su_id is a FK — serialize the raw integer (su_id_id) to avoid N+1 DB queries.
+# Previously including 'su_id' caused DRF to follow the FK accessor (obj.su_id),
+# firing one SELECT on la_spatial_unit per feature (N+1 queries, each costing ~240ms RTT).
 class Survey_Rep_Map_Serializer(GeoFeatureModelSerializer):
+    su_id = serializers.IntegerField(source='su_id_id', allow_null=True)
+
     class Meta:
         model = Survey_Rep_DATA_Model
         geo_field = 'geom'

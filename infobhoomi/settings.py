@@ -18,7 +18,7 @@ from decouple import config
 
 # Setup environment variables
 BASE_DIR = Path(__file__).resolve().parent.parent
-dotenv_file = BASE_DIR / '.env.local'
+dotenv_file = BASE_DIR / '.env'
 
 if dotenv_file.exists():
     dotenv.load_dotenv(dotenv_file)

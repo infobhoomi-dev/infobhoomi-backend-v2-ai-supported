@@ -8,8 +8,6 @@ HIGH,55,Inquiries,done_status,boolean,NO,100.0,0,True,False,False
 HIGH,55,Inquiries,hide_status,boolean,NO,100.0,0,True,False,False
 HIGH,55,Inquiries,user_id_assigned,integer,NO,100.0,0,True,False,False
 HIGH,55,Inquiries,user_id_creator,integer,NO,100.0,0,True,False,False
-HIGH,55,la_admin_source,exte_arch_ref,character varying,YES,100.0,106,True,False,True
-HIGH,55,la_admin_source,source_description,text,YES,100.0,106,True,False,True
 HIGH,55,la_level,content_type_id,integer,YES,100.0,0,True,False,False
 HIGH,55,la_level,register_type_id,integer,YES,100.0,0,True,False,False
 HIGH,55,la_level,structure_type_id,integer,YES,100.0,0,True,False,False
@@ -33,15 +31,6 @@ HIGH,55,la_ls_ils_unit,surface_relation,character varying,YES,100.0,0,True,False
 HIGH,55,la_ls_ils_unit,hight,numeric,YES,100.0,0,True,False,False
 HIGH,55,la_ls_ils_unit,floor_type,character varying,YES,100.0,0,True,False,False
 HIGH,55,la_ls_ils_unit,ils_name,character varying,YES,100.0,0,True,False,False
-HIGH,55,la_ls_land_unit,postal_ad_lnd,character varying,YES,100.0,3576,True,False,True
-HIGH,55,la_ls_land_unit,ext_landuse_sub_type,character varying,YES,100.0,3576,True,False,True
-HIGH,55,la_ls_land_unit,land_name,character varying,YES,100.0,3576,True,False,True
-HIGH,55,la_ls_land_unit,registration_date,date,YES,100.0,3576,True,False,True
-HIGH,55,la_ls_land_unit,local_auth,character varying,YES,100.0,3576,True,False,True
-HIGH,55,la_ls_land_unit,adjacent_parcels,character varying,YES,100.0,3576,True,False,True
-HIGH,55,la_ls_land_unit,child_parcels,character varying,YES,100.0,3576,True,False,True
-HIGH,55,la_ls_land_unit,parent_parcel,character varying,YES,100.0,3576,True,False,True
-HIGH,55,la_ls_land_unit,part_of_estate,character varying,YES,100.0,3576,True,False,True
 HIGH,55,la_ls_mylayer_pointline_unit,ols_made_type,character varying,YES,100.0,0,True,False,False
 HIGH,55,la_ls_mylayer_pointline_unit,ols_main_type,character varying,YES,100.0,0,True,False,False
 HIGH,55,la_ls_mylayer_pointline_unit,ols_x_type,character varying,YES,100.0,0,True,False,False
@@ -80,8 +69,6 @@ HIGH,55,la_ls_ols_unit,width,numeric,YES,100.0,0,True,False,False
 HIGH,55,la_ls_ols_unit,grade,character varying,YES,100.0,0,True,False,False
 HIGH,55,la_ls_ols_unit,surface_relation,character varying,YES,100.0,0,True,False,False
 HIGH,55,la_ls_ols_unit,ols_poly_name,character varying,YES,100.0,0,True,False,False
-HIGH,55,la_rrr_responsibility,ba_unit_id,integer,YES,100.0,6,True,False,True
-HIGH,55,la_rrr_restriction,ba_unit_id,integer,YES,100.0,7,True,False,True
 HIGH,55,la_spatial_unit_sketch_ref,sketch_ref_type,character varying,NO,100.0,0,True,False,False
 HIGH,55,la_spatial_unit_sketch_ref,avl_status,boolean,NO,100.0,0,True,False,False
 HIGH,55,la_spatial_unit_sketch_ref,doc_owner,integer,YES,100.0,0,True,False,False
@@ -105,7 +92,6 @@ HIGH,55,residence_info,resident_type,character varying,NO,100.0,0,True,False,Fal
 HIGH,55,residence_info,user_added_date,timestamp with time zone,NO,100.0,0,True,False,False
 HIGH,55,residence_info,start_date,timestamp with time zone,YES,100.0,0,True,False,False
 HIGH,55,residence_info,expiry_date,timestamp with time zone,YES,100.0,0,True,False,False
-HIGH,55,survey_rep,ref_ids,integer,YES,100.0,3574,True,False,True
 HIGH,55,survey_rep_func_history,tool,character varying,NO,100.0,0,True,False,False
 HIGH,55,survey_rep_func_history,user_remark,text,YES,100.0,0,True,False,False
 HIGH,55,tags,tag_id,integer,NO,100.0,0,True,False,False
@@ -116,32 +102,20 @@ HIGH,55,tags,date_deleted,timestamp with time zone,YES,100.0,0,True,False,False
 HIGH,55,tags,user_id_creator,integer,NO,100.0,0,True,False,False
 HIGH,55,test_list,my_party_id,integer,NO,100.0,0,True,False,False
 HIGH,55,user_user,date_joined,timestamp with time zone,NO,0.0,15,False,False,False
-HIGH,50,sl_party,pmt_address,character varying,YES,100.0,6,True,True,False
-HIGH,50,sl_party,tp,ARRAY,YES,100.0,6,True,True,False
-HIGH,50,sl_party,specific_tp,character varying,YES,100.0,6,True,True,False
-HIGH,50,sl_party,remark,text,YES,100.0,6,True,True,False
-HIGH,50,sl_party,la_party_type,character varying,YES,100.0,6,True,True,False
 MEDIUM,45,Inquiries,content,text,YES,100.0,0,True,False,True
 MEDIUM,45,LADM_rrr,share_type,character varying,NO,100.0,0,True,False,True
-MEDIUM,45,LADM_rrr,ba_unit_id,integer,YES,100.0,0,True,False,True
 MEDIUM,45,attrib_panel_images,image_id,integer,NO,100.0,0,True,False,True
 MEDIUM,45,authtoken_token,key,character varying,NO,0.0,10,False,False,True
 MEDIUM,45,dynamic_attribute,created_by,integer,YES,100.0,0,True,False,True
-MEDIUM,45,history_party_attrib,done_by,integer,NO,100.0,0,True,False,True
 MEDIUM,45,history_party_attrib,field_name,character varying,NO,100.0,0,True,False,True
 MEDIUM,45,history_party_attrib,field_value,character varying,NO,100.0,0,True,False,True
 MEDIUM,45,la_ba_unit_spatial_unit,relation_type,character varying,YES,100.0,0,True,False,True
-MEDIUM,45,la_ba_unit_spatial_unit,ba_unit_id,integer,NO,100.0,0,True,False,True
 MEDIUM,45,la_ls_apt_unit,house_hold_no,character varying,YES,100.0,0,True,False,True
 MEDIUM,45,la_ls_apt_unit,roof_type,character varying,YES,100.0,0,True,False,True
 MEDIUM,45,la_ls_apt_unit,wall_type,character varying,YES,100.0,0,True,False,True
 MEDIUM,45,la_ls_ils_unit,house_hold_no,character varying,YES,100.0,0,True,False,True
 MEDIUM,45,la_ls_ils_unit,roof_type,character varying,YES,100.0,0,True,False,True
 MEDIUM,45,la_ls_ils_unit,wall_type,character varying,YES,100.0,0,True,False,True
-MEDIUM,45,la_ls_mylayer_pointline_unit,access_road,character varying,YES,100.0,0,True,False,True
-MEDIUM,45,la_ls_mylayer_unit,access_road,character varying,YES,100.0,0,True,False,True
-MEDIUM,45,la_ls_ols_pointline_unit,access_road,character varying,YES,100.0,0,True,False,True
-MEDIUM,45,la_ls_ols_unit,access_road,character varying,YES,100.0,0,True,False,True
 MEDIUM,45,la_mortgage,interest,numeric,YES,100.0,0,True,False,True
 MEDIUM,45,la_mortgage,mortgage_type,character varying,YES,100.0,0,True,False,True
 MEDIUM,45,la_mortgage,mortgage_ref_id,character varying,YES,100.0,0,True,False,True
@@ -151,38 +125,48 @@ MEDIUM,45,messages,content,text,NO,100.0,0,True,False,True
 MEDIUM,45,reminders,content,text,YES,100.0,0,True,False,True
 MEDIUM,45,tags,content,text,YES,100.0,0,True,False,True
 MEDIUM,40,assessment,ass_out_balance,numeric,YES,100.0,10697,True,True,True
-MEDIUM,40,attrib_panel_images,remark,character varying,YES,100.0,0,True,True,False
 MEDIUM,40,la_admin_source,reference_no,character varying,YES,100.0,106,True,True,True
 MEDIUM,40,la_admin_source,acceptance_date,date,YES,100.0,106,True,True,True
-MEDIUM,40,la_ls_land_unit,access_road,character varying,YES,99.9,3576,True,False,True
-MEDIUM,40,la_ls_land_unit,ext_landuse_type,character varying,YES,99.9,3576,True,False,True
-MEDIUM,40,la_ls_land_unit,sl_land_type,character varying,YES,99.9,3576,True,False,True
-MEDIUM,40,la_ls_land_unit,boundary_type,character varying,YES,99.9,3576,True,False,True
-MEDIUM,40,la_ls_land_unit,crs,character varying,YES,99.9,3576,True,False,True
-MEDIUM,40,la_ls_land_unit,perimeter,numeric,YES,99.9,3576,True,False,True
-MEDIUM,40,la_ls_land_unit,tenure_type,character varying,YES,99.9,3576,True,False,True
+MEDIUM,40,la_admin_source,exte_arch_ref,character varying,YES,100.0,106,True,True,True
+MEDIUM,40,la_admin_source,source_description,text,YES,100.0,106,True,True,True
+MEDIUM,40,la_ls_land_unit,postal_ad_lnd,character varying,YES,100.0,3576,True,True,True
+MEDIUM,40,la_ls_land_unit,ext_landuse_sub_type,character varying,YES,100.0,3576,True,True,True
+MEDIUM,40,la_ls_land_unit,land_name,character varying,YES,100.0,3576,True,True,True
+MEDIUM,40,la_ls_land_unit,registration_date,date,YES,100.0,3576,True,True,True
+MEDIUM,40,la_ls_land_unit,local_auth,character varying,YES,100.0,3576,True,True,True
+MEDIUM,40,la_ls_land_unit,adjacent_parcels,character varying,YES,100.0,3576,True,True,True
+MEDIUM,40,la_ls_land_unit,child_parcels,character varying,YES,100.0,3576,True,True,True
+MEDIUM,40,la_ls_land_unit,parent_parcel,character varying,YES,100.0,3576,True,True,True
+MEDIUM,40,la_ls_land_unit,part_of_estate,character varying,YES,100.0,3576,True,True,True
 MEDIUM,40,la_ls_utinet_lu,sani_sewer,character varying,YES,100.0,10698,True,True,True
-MEDIUM,40,la_rrr,ba_unit_id,integer,YES,96.8,63,True,False,True
+MEDIUM,40,la_rrr_responsibility,ba_unit_id,integer,YES,100.0,6,True,True,True
+MEDIUM,40,la_rrr_restriction,ba_unit_id,integer,YES,100.0,7,True,True,True
 MEDIUM,40,la_sp_fire_rescue,description,text,YES,100.0,3,True,True,True
 MEDIUM,40,la_spatial_unit,parcel_status,character varying,YES,99.9,10748,True,False,True
-MEDIUM,40,la_spatial_unit_sketch_ref,remark,character varying,YES,100.0,0,True,True,False
+MEDIUM,40,sl_party,pmt_address,character varying,YES,100.0,6,True,True,True
+MEDIUM,40,sl_party,tp,ARRAY,YES,100.0,6,True,True,True
+MEDIUM,40,sl_party,specific_tp,character varying,YES,100.0,6,True,True,True
 MEDIUM,40,sl_party,other_reg,ARRAY,YES,100.0,6,True,True,True
+MEDIUM,40,sl_party,remark,text,YES,100.0,6,True,True,True
+MEDIUM,40,sl_party,la_party_type,character varying,YES,100.0,6,True,True,True
 MEDIUM,40,sl_party,sl_party_type,character varying,YES,100.0,6,True,True,True
 MEDIUM,40,sl_party,gnd_id,integer,YES,100.0,6,True,True,True
+MEDIUM,40,survey_rep,ref_ids,integer,YES,100.0,3574,True,True,True
 MEDIUM,40,survey_rep_geom_history,ref_id,integer,YES,100.0,3615,True,True,True
 MEDIUM,40,survey_rep_geom_history,reference_coordinate,character varying,YES,100.0,3615,True,True,True
 MEDIUM,40,test_json,geom,USER-DEFINED,YES,100.0,6,True,True,True
 MEDIUM,40,test_list,permission_name,character varying,NO,100.0,0,True,True,False
-MEDIUM,40,test_list,remark,character varying,YES,100.0,0,True,True,False
 MEDIUM,30,Inquiries,date_created,timestamp with time zone,NO,100.0,0,True,True,True
 MEDIUM,30,Inquiries,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,LADM_rrr,rrr_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,LADM_rrr,share,numeric,NO,100.0,0,True,True,True
 MEDIUM,30,LADM_rrr,admin_source_id,integer,YES,100.0,0,True,True,True
+MEDIUM,30,LADM_rrr,ba_unit_id,integer,YES,100.0,0,True,True,True
 MEDIUM,30,LADM_rrr,pid,integer,YES,100.0,0,True,True,True
 MEDIUM,30,attrib_panel_images,user_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,attrib_panel_images,file_path,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,attrib_panel_images,status,boolean,NO,100.0,0,True,True,True
+MEDIUM,30,attrib_panel_images,remark,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,attrib_panel_images,date_created,timestamp with time zone,NO,100.0,0,True,True,True
 MEDIUM,30,attrib_panel_images,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,dynamic_attribute,id,integer,NO,100.0,0,True,True,True
@@ -193,9 +177,11 @@ MEDIUM,30,dynamic_attribute,value,text,YES,100.0,0,True,True,True
 MEDIUM,30,dynamic_attribute,date_created,timestamp with time zone,NO,100.0,0,True,True,True
 MEDIUM,30,dynamic_attribute,status,boolean,NO,100.0,0,True,True,True
 MEDIUM,30,history_party_attrib,id,integer,NO,100.0,0,True,True,True
+MEDIUM,30,history_party_attrib,done_by,integer,NO,100.0,0,True,True,True
 MEDIUM,30,history_party_attrib,pid,integer,NO,100.0,0,True,True,True
 MEDIUM,30,history_party_attrib,date_created,timestamp with time zone,NO,100.0,0,True,True,True
 MEDIUM,30,la_ba_unit_spatial_unit,id,integer,NO,100.0,0,True,True,True
+MEDIUM,30,la_ba_unit_spatial_unit,ba_unit_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_ba_unit_spatial_unit,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_level,id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_level,name,character varying,NO,100.0,0,True,True,True
@@ -206,15 +192,19 @@ MEDIUM,30,la_ls_ils_unit,id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_ils_unit,status,boolean,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_ils_unit,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_mylayer_pointline_unit,id,integer,NO,100.0,0,True,True,True
+MEDIUM,30,la_ls_mylayer_pointline_unit,access_road,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,la_ls_mylayer_pointline_unit,status,boolean,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_mylayer_pointline_unit,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_mylayer_unit,id,integer,NO,100.0,0,True,True,True
+MEDIUM,30,la_ls_mylayer_unit,access_road,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,la_ls_mylayer_unit,status,boolean,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_mylayer_unit,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_ols_pointline_unit,id,integer,NO,100.0,0,True,True,True
+MEDIUM,30,la_ls_ols_pointline_unit,access_road,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,la_ls_ols_pointline_unit,status,boolean,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_ols_pointline_unit,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_ols_unit,id,integer,NO,100.0,0,True,True,True
+MEDIUM,30,la_ls_ols_unit,access_road,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,la_ls_ols_unit,status,boolean,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_ols_unit,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,la_ls_utinet_au,id,integer,NO,100.0,0,True,True,True
@@ -257,6 +247,7 @@ MEDIUM,30,la_mortgage,mortgagee,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,la_spatial_unit_sketch_ref,description,text,YES,100.0,0,True,True,True
 MEDIUM,30,la_spatial_unit_sketch_ref,file_path,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,la_spatial_unit_sketch_ref,status,boolean,NO,100.0,0,True,True,True
+MEDIUM,30,la_spatial_unit_sketch_ref,remark,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,la_spatial_unit_sketch_ref,date_created,timestamp with time zone,NO,100.0,0,True,True,True
 MEDIUM,30,la_spatial_unit_sketch_ref,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,messages,file_path,character varying,YES,100.0,0,True,True,True
@@ -300,6 +291,7 @@ MEDIUM,30,tags,su_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,test_list,id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,test_list,permission_id,integer,NO,100.0,0,True,True,True
 MEDIUM,30,test_list,username,character varying,YES,100.0,0,True,True,True
+MEDIUM,30,test_list,remark,character varying,YES,100.0,0,True,True,True
 MEDIUM,30,user_user,last_login,timestamp with time zone,YES,0.0,15,False,True,True
 MEDIUM,30,user_user_groups,id,bigint,NO,100.0,0,True,True,True
 MEDIUM,30,user_user_groups,user_id,bigint,NO,100.0,0,True,True,True
@@ -310,11 +302,17 @@ MEDIUM,25,assessment,external_ass_id,character varying,YES,66.9,10697,True,False
 MEDIUM,25,assessment,ass_road,character varying,YES,66.9,10697,True,False,False
 MEDIUM,25,assessment,su_id,integer,YES,99.7,10697,True,True,True
 MEDIUM,25,city_json,created_at,timestamp with time zone,NO,0.0,8,True,False,False
-MEDIUM,25,la_admin_source,done_by,integer,YES,88.7,106,True,False,True
 MEDIUM,25,la_ls_build_unit,surface_relation,character varying,YES,5.7,53,True,False,False
 MEDIUM,25,la_ls_build_unit,hight,numeric,YES,5.7,53,True,False,False
+MEDIUM,25,la_ls_land_unit,access_road,character varying,YES,99.9,3576,True,True,True
+MEDIUM,25,la_ls_land_unit,ext_landuse_type,character varying,YES,99.9,3576,True,True,True
+MEDIUM,25,la_ls_land_unit,sl_land_type,character varying,YES,99.9,3576,True,True,True
 MEDIUM,25,la_ls_land_unit,area,numeric,YES,99.9,3576,True,True,True
 MEDIUM,25,la_ls_land_unit,dimension_2d_3d,character varying,YES,99.9,3576,True,True,True
+MEDIUM,25,la_ls_land_unit,boundary_type,character varying,YES,99.9,3576,True,True,True
+MEDIUM,25,la_ls_land_unit,crs,character varying,YES,99.9,3576,True,True,True
+MEDIUM,25,la_ls_land_unit,perimeter,numeric,YES,99.9,3576,True,True,True
+MEDIUM,25,la_ls_land_unit,tenure_type,character varying,YES,99.9,3576,True,True,True
 MEDIUM,25,la_ls_land_unit,su_id,integer,YES,99.0,3576,True,True,True
 MEDIUM,25,la_ls_utinet_lu,water,character varying,YES,99.2,10698,True,True,True
 MEDIUM,25,la_ls_utinet_lu,elec,character varying,YES,99.2,10698,True,True,True
@@ -322,7 +320,7 @@ MEDIUM,25,la_ls_utinet_lu,drainage,character varying,YES,99.2,10698,True,True,Tr
 MEDIUM,25,la_ls_utinet_lu,sani_gully,character varying,YES,99.2,10698,True,True,True
 MEDIUM,25,la_ls_utinet_lu,garbage_dispose,character varying,YES,99.2,10698,True,True,True
 MEDIUM,25,la_ls_utinet_lu,su_id,integer,YES,99.7,10698,True,True,True
-MEDIUM,25,la_rrr,time_end,date,YES,93.7,63,True,False,True
+MEDIUM,25,la_rrr,ba_unit_id,integer,YES,96.8,63,True,True,True
 MEDIUM,25,la_spatial_unit,label,character varying,YES,99.5,10748,True,True,True
 MEDIUM,25,layers,colour,character varying,NO,0.0,27,True,False,False
 MEDIUM,25,survey_rep,parent_id,ARRAY,YES,99.7,3574,True,True,True
@@ -342,10 +340,8 @@ LOW,15,city_object,children,jsonb,YES,60.0,5,True,False,True
 LOW,15,city_object,geometry,jsonb,YES,0.0,5,True,False,True
 LOW,15,history_spatialunit_attrib,field_name,character varying,NO,0.0,396,True,False,True
 LOW,15,history_spatialunit_attrib,field_value,character varying,NO,0.0,396,True,False,True
-LOW,15,history_user_attrib,done_by,integer,NO,0.0,101,True,False,True
 LOW,15,history_user_attrib,field_name,character varying,NO,0.0,101,True,False,True
 LOW,15,history_user_attrib,field_value,character varying,NO,0.0,101,True,False,True
-LOW,15,la_ls_build_unit,access_road,character varying,YES,1.9,53,True,False,True
 LOW,15,la_ls_build_unit,postal_ad_build,character varying,YES,5.7,53,True,False,True
 LOW,15,la_ls_build_unit,house_hold_no,character varying,YES,5.7,53,True,False,True
 LOW,15,la_ls_build_unit,ext_builduse_type,character varying,YES,5.7,53,True,False,True
@@ -357,7 +353,6 @@ LOW,15,la_ls_build_unit,building_name,character varying,YES,5.7,53,True,False,Tr
 LOW,15,la_ls_build_unit,bld_property_type,character varying,YES,5.7,53,True,False,True
 LOW,15,la_ls_build_unit,condition,character varying,YES,1.9,53,True,False,True
 LOW,15,la_ls_build_unit,construction_year,integer,YES,5.7,53,True,False,True
-LOW,15,la_ls_build_unit,registration_date,date,YES,5.7,53,True,False,True
 LOW,15,la_ls_build_unit,structure_type,character varying,YES,1.9,53,True,False,True
 LOW,15,la_ls_physical_env,elevation,numeric,YES,0.0,92,True,False,True
 LOW,15,la_ls_physical_env,slope,numeric,YES,0.0,92,True,False,True
@@ -372,50 +367,29 @@ LOW,15,la_ls_zoning,setback_front,numeric,YES,0.0,92,True,False,True
 LOW,15,la_ls_zoning,setback_rear,numeric,YES,0.0,92,True,False,True
 LOW,15,la_ls_zoning,setback_side,numeric,YES,0.0,92,True,False,True
 LOW,15,la_ls_zoning,special_overlay,character varying,YES,38.0,92,True,False,True
-LOW,15,la_rrr,time_begin,date,YES,0.0,63,True,False,True
 LOW,15,la_rrr,rrr_type,character varying,NO,0.0,63,True,False,True
-LOW,15,la_rrr_audit,ba_unit_id,integer,YES,0.0,2,True,False,True
 LOW,15,la_rrr_audit,action,character varying,NO,0.0,2,True,False,True
 LOW,15,la_rrr_audit,changed_by,integer,NO,0.0,2,True,False,True
 LOW,15,la_rrr_audit,changed_by_name,character varying,YES,0.0,2,True,False,True
 LOW,15,la_rrr_audit,changed_at,timestamp with time zone,NO,0.0,2,True,False,True
 LOW,15,la_rrr_audit,snapshot,jsonb,NO,0.0,2,True,False,True
-LOW,15,la_rrr_document,ba_unit_id,integer,NO,0.0,3,True,False,True
-LOW,15,la_rrr_responsibility,rrr_responsibility_type,character varying,NO,0.0,6,True,False,True
-LOW,15,la_rrr_responsibility,time_begin,date,YES,0.0,6,True,False,True
-LOW,15,la_rrr_responsibility,time_end,date,YES,50.0,6,True,False,True
-LOW,15,la_rrr_restriction,rrr_restriction_type,character varying,NO,0.0,7,True,False,True
-LOW,15,la_rrr_restriction,time_begin,date,YES,0.0,7,True,False,True
-LOW,15,la_rrr_restriction,time_end,date,YES,28.6,7,True,False,True
 LOW,15,la_spatial_source,approval_status,boolean,NO,0.0,11,True,False,True
 LOW,15,layers,group_name,ARRAY,YES,22.2,27,True,False,True
 LOW,15,lst_org_names_40,code,character varying,NO,0.0,20,True,False,True
 LOW,15,lst_sl_party_type_1,code,character varying,NO,0.0,4,True,False,True
 LOW,15,org_location,city,character varying,YES,0.0,4,True,False,True
 LOW,15,permission_list,type,integer,NO,0.0,151,True,False,True
-LOW,15,sl_ba_unit,ba_unit_id,integer,NO,0.0,62,True,False,True
 LOW,15,sl_ba_unit,sl_ba_unit_type,character varying,NO,0.0,62,True,False,True
 LOW,15,sl_ba_unit,sl_ba_unit_name,text,NO,0.0,62,True,False,True
 LOW,15,sl_elect_local_auth,eletorate,character varying,YES,0.0,13,True,False,True
-LOW,15,sl_elect_local_auth,local_auth,character varying,YES,0.0,13,True,False,True
-LOW,15,sl_party,done_by,integer,NO,0.0,6,True,False,True
 LOW,15,sl_party_roles,party_role_type,character varying,NO,0.0,13,True,False,True
-LOW,15,sl_party_roles,done_by,integer,NO,0.0,13,True,False,True
 LOW,15,sl_party_roles,share_type,character varying,YES,0.0,13,True,False,True
 LOW,15,user_user,is_staff,boolean,NO,0.0,15,True,False,True
 LOW,15,user_user,is_superuser,boolean,NO,0.0,15,True,False,True
+LOW,10,la_admin_source,done_by,integer,YES,88.7,106,True,True,True
+LOW,10,la_rrr,time_end,date,YES,93.7,63,True,True,True
 LOW,10,permission_list,sub_category,character varying,YES,0.0,151,True,True,False
 LOW,10,permission_list,permission_name,character varying,NO,0.0,151,True,True,False
-LOW,10,permission_list,remark,character varying,YES,27.2,151,True,True,False
-LOW,10,sl_organization,permit_start_date,date,YES,50.0,4,True,True,False
-LOW,10,sl_organization,contact_no,character varying,YES,50.0,4,True,True,False
-LOW,10,sl_organization,org_address,character varying,YES,50.0,4,True,True,False
-LOW,10,sl_organization,org_email,character varying,YES,50.0,4,True,True,False
-LOW,10,sl_organization,director,character varying,YES,50.0,4,True,True,False
-LOW,10,sl_organization,subscription_plan,character varying,YES,0.0,4,True,True,False
-LOW,10,sl_party,date_of_birth,date,YES,0.0,6,True,True,False
-LOW,10,sl_party,gender,character varying,YES,0.0,6,True,True,False
-LOW,10,user_roles,remark,character varying,YES,75.0,4,True,True,False
 LOW,0,assessment,id,integer,NO,0.0,10697,True,True,True
 LOW,0,assessment,assessment_no,character varying,YES,66.9,10697,True,True,True
 LOW,0,assessment,assessment_annual_value,numeric,NO,0.0,10697,True,True,True
@@ -439,6 +413,7 @@ LOW,0,history_spatialunit_attrib,su_id,integer,YES,6.8,396,True,True,True
 LOW,0,history_spatialunit_attrib,category,character varying,NO,0.0,396,True,True,True
 LOW,0,history_spatialunit_attrib,date_created,timestamp with time zone,NO,0.0,396,True,True,True
 LOW,0,history_user_attrib,id,integer,NO,0.0,101,True,True,True
+LOW,0,history_user_attrib,done_by,integer,NO,0.0,101,True,True,True
 LOW,0,history_user_attrib,user_id,integer,NO,0.0,101,True,True,True
 LOW,0,history_user_attrib,date_created,timestamp with time zone,NO,0.0,101,True,True,True
 LOW,0,la_admin_source,admin_source_id,integer,NO,0.0,106,True,True,True
@@ -448,8 +423,10 @@ LOW,0,la_admin_source,status,boolean,NO,0.0,106,True,True,True
 LOW,0,la_admin_source,date_created,timestamp with time zone,NO,0.0,106,True,True,True
 LOW,0,la_admin_source,user_id,integer,NO,0.0,106,True,True,True
 LOW,0,la_ls_build_unit,id,integer,NO,0.0,53,True,True,True
+LOW,0,la_ls_build_unit,access_road,character varying,YES,1.9,53,True,True,True
 LOW,0,la_ls_build_unit,status,boolean,NO,0.0,53,True,True,True
 LOW,0,la_ls_build_unit,su_id,integer,NO,0.0,53,True,True,True
+LOW,0,la_ls_build_unit,registration_date,date,YES,5.7,53,True,True,True
 LOW,0,la_ls_land_unit,id,integer,NO,0.0,3576,True,True,True
 LOW,0,la_ls_land_unit,status,boolean,NO,0.0,3576,True,True,True
 LOW,0,la_ls_physical_env,id,integer,NO,0.0,92,True,True,True
@@ -473,16 +450,25 @@ LOW,0,la_ls_zoning,su_id,integer,NO,0.0,92,True,True,True
 LOW,0,la_rrr,rrr_id,integer,NO,0.0,63,True,True,True
 LOW,0,la_rrr,admin_source_id,integer,YES,0.0,63,True,True,True
 LOW,0,la_rrr,description,text,YES,0.0,63,True,True,True
+LOW,0,la_rrr,time_begin,date,YES,0.0,63,True,True,True
 LOW,0,la_rrr,status,boolean,NO,0.0,63,True,True,True
 LOW,0,la_rrr_audit,id,integer,NO,0.0,2,True,True,True
 LOW,0,la_rrr_audit,rrr_id,integer,NO,0.0,2,True,True,True
+LOW,0,la_rrr_audit,ba_unit_id,integer,YES,0.0,2,True,True,True
 LOW,0,la_rrr_audit,su_id,integer,YES,0.0,2,True,True,True
 LOW,0,la_rrr_document,id,integer,NO,0.0,3,True,True,True
 LOW,0,la_rrr_document,admin_source_id,integer,NO,0.0,3,True,True,True
+LOW,0,la_rrr_document,ba_unit_id,integer,NO,0.0,3,True,True,True
 LOW,0,la_rrr_responsibility,id,integer,NO,0.0,6,True,True,True
+LOW,0,la_rrr_responsibility,rrr_responsibility_type,character varying,NO,0.0,6,True,True,True
 LOW,0,la_rrr_responsibility,description,text,YES,33.3,6,True,True,True
+LOW,0,la_rrr_responsibility,time_begin,date,YES,0.0,6,True,True,True
+LOW,0,la_rrr_responsibility,time_end,date,YES,50.0,6,True,True,True
 LOW,0,la_rrr_restriction,id,integer,NO,0.0,7,True,True,True
+LOW,0,la_rrr_restriction,rrr_restriction_type,character varying,NO,0.0,7,True,True,True
 LOW,0,la_rrr_restriction,description,text,YES,42.9,7,True,True,True
+LOW,0,la_rrr_restriction,time_begin,date,YES,0.0,7,True,True,True
+LOW,0,la_rrr_restriction,time_end,date,YES,28.6,7,True,True,True
 LOW,0,la_sp_fire_rescue,id,integer,NO,0.0,3,True,True,True
 LOW,0,la_sp_fire_rescue,su_id,integer,NO,0.0,3,True,True,True
 LOW,0,la_spatial_source,id,integer,NO,0.0,11,True,True,True
@@ -599,6 +585,7 @@ LOW,0,permission_list,view,boolean,YES,0.7,151,True,True,True
 LOW,0,permission_list,add,boolean,YES,77.5,151,True,True,True
 LOW,0,permission_list,edit,boolean,YES,25.8,151,True,True,True
 LOW,0,permission_list,delete,boolean,YES,78.1,151,True,True,True
+LOW,0,permission_list,remark,character varying,YES,27.2,151,True,True,True
 LOW,0,permission_list,status,boolean,NO,0.0,151,True,True,True
 LOW,0,role_permission,id,integer,NO,0.0,596,True,True,True
 LOW,0,role_permission,view,boolean,YES,0.0,596,True,True,True
@@ -607,10 +594,12 @@ LOW,0,role_permission,edit,boolean,YES,0.0,596,True,True,True
 LOW,0,role_permission,delete,boolean,YES,62.9,596,True,True,True
 LOW,0,role_permission,permission_id,integer,NO,0.0,596,True,True,True
 LOW,0,role_permission,role_id,integer,NO,0.0,596,True,True,True
+LOW,0,sl_ba_unit,ba_unit_id,integer,NO,0.0,62,True,True,True
 LOW,0,sl_ba_unit,su_id,integer,NO,0.0,62,True,True,True
 LOW,0,sl_ba_unit,status,boolean,NO,0.0,62,True,True,True
 LOW,0,sl_elect_local_auth,id,integer,NO,0.0,13,True,True,True
 LOW,0,sl_elect_local_auth,gnd_id,integer,YES,0.0,13,True,True,True
+LOW,0,sl_elect_local_auth,local_auth,character varying,YES,0.0,13,True,True,True
 LOW,0,sl_gnd_10m,gid,integer,NO,0.0,14040,True,True,True
 LOW,0,sl_gnd_10m,gnd,character varying,NO,0.0,14040,True,True,True
 LOW,0,sl_gnd_10m,dsd,character varying,NO,0.0,14040,True,True,True
@@ -622,19 +611,29 @@ LOW,0,sl_org_department,dep_name,character varying,NO,0.0,7,True,True,True
 LOW,0,sl_org_department,org_id,integer,NO,0.0,7,True,True,True
 LOW,0,sl_organization,org_id,integer,NO,0.0,4,True,True,True
 LOW,0,sl_organization,display_name,character varying,YES,0.0,4,True,True,True
+LOW,0,sl_organization,permit_start_date,date,YES,50.0,4,True,True,True
 LOW,0,sl_organization,permit_end_date,date,YES,50.0,4,True,True,True
 LOW,0,sl_organization,org_level,integer,NO,0.0,4,True,True,True
 LOW,0,sl_organization,status,boolean,NO,0.0,4,True,True,True
+LOW,0,sl_organization,contact_no,character varying,YES,50.0,4,True,True,True
+LOW,0,sl_organization,org_address,character varying,YES,50.0,4,True,True,True
+LOW,0,sl_organization,org_email,character varying,YES,50.0,4,True,True,True
+LOW,0,sl_organization,director,character varying,YES,50.0,4,True,True,True
+LOW,0,sl_organization,subscription_plan,character varying,YES,0.0,4,True,True,True
 LOW,0,sl_organization,users_limit,integer,YES,25.0,4,True,True,True
 LOW,0,sl_party,pid,integer,NO,0.0,6,True,True,True
 LOW,0,sl_party,party_name,character varying,NO,0.0,6,True,True,True
 LOW,0,sl_party,ext_pid_type,character varying,YES,0.0,6,True,True,True
 LOW,0,sl_party,ext_pid,character varying,YES,0.0,6,True,True,True
 LOW,0,sl_party,email,character varying,YES,16.7,6,True,True,True
+LOW,0,sl_party,date_of_birth,date,YES,0.0,6,True,True,True
+LOW,0,sl_party,gender,character varying,YES,0.0,6,True,True,True
+LOW,0,sl_party,done_by,integer,NO,0.0,6,True,True,True
 LOW,0,sl_party,party_full_name,character varying,NO,0.0,6,True,True,True
 LOW,0,sl_party,date_created,timestamp with time zone,NO,0.0,6,True,True,True
 LOW,0,sl_party_roles,id,integer,NO,0.0,13,True,True,True
 LOW,0,sl_party_roles,date_created,timestamp with time zone,NO,0.0,13,True,True,True
+LOW,0,sl_party_roles,done_by,integer,NO,0.0,13,True,True,True
 LOW,0,sl_party_roles,pid,integer,YES,0.0,13,True,True,True
 LOW,0,sl_party_roles,rrr_id,integer,YES,0.0,13,True,True,True
 LOW,0,sl_party_roles,share,numeric,YES,0.0,13,True,True,True
@@ -673,6 +672,7 @@ LOW,0,user_roles,role_id,integer,NO,0.0,4,True,True,True
 LOW,0,user_roles,role_name,character varying,NO,0.0,4,True,True,True
 LOW,0,user_roles,admin_id,integer,NO,0.0,4,True,True,True
 LOW,0,user_roles,users,ARRAY,YES,0.0,4,True,True,True
+LOW,0,user_roles,remark,character varying,YES,75.0,4,True,True,True
 LOW,0,user_roles,role_type,character varying,NO,0.0,4,True,True,True
 LOW,0,user_roles,user_id,integer,YES,0.0,4,True,True,True
 LOW,0,user_roles,org_id,integer,NO,0.0,4,True,True,True

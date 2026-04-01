@@ -328,23 +328,23 @@ class Survey_Rep_DATA_Filter_User_View(APIView):
         userID = user_obj.id # Retrieve userID from the User model
         org_id = user_obj.org_id
 
-        layers = LayersModel.objects.filter(
+        layer_ids = list(LayersModel.objects.filter(
             Q(group_name__contains=["default"]) |
             Q(group_name__contains=[userID]) |
             (Q(group_name__contains=["org"]) & Q(org_id=org_id)) |
             Q(user_id=userID)
-        ).values_list('layer_id', flat=True)
+        ).values_list('layer_id', flat=True))
 
         # Use the retrieved layer_ids to filter Survey_Rep_DATA_Model
         # Exclude null-geometry records — these are legacy LADM records imported
         # without spatial data.  Sending them to the frontend causes console spam
         # and wastes bandwidth since they can never be rendered.
-        geom_data = Survey_Rep_DATA_Model.objects.filter(
-            layer_id__in=layers,
+        geom_data = list(Survey_Rep_DATA_Model.objects.filter(
+            layer_id__in=layer_ids,
             status=True,
             org_id=org_id,
             geom__isnull=False,
-        ).only('id', 'su_id', 'uuid', 'layer_id', 'gnd_id', 'calculated_area', 'parent_id', 'status', 'geom')
+        ).only('id', 'su_id', 'uuid', 'layer_id', 'gnd_id', 'calculated_area', 'parent_id', 'status', 'geom'))
 
         # Serialize geom data — lean serializer sends only map-required fields
         serializer = Survey_Rep_Map_Serializer(geom_data, many=True)
