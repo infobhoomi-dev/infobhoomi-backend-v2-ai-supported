@@ -23,6 +23,8 @@ from django.contrib.gis.geos import GEOSGeometry
 from django.contrib.gis.db.models.functions import Area, Intersection as GeoIntersection
 
 import json, os, time, logging
+
+logger = logging.getLogger(__name__)
 from datetime import timedelta
 
 import user
@@ -334,6 +336,15 @@ class Survey_Rep_DATA_Filter_User_View(APIView):
             (Q(group_name__contains=["org"]) & Q(org_id=org_id)) |
             Q(user_id=userID)
         ).values_list('layer_id', flat=True))
+
+        # --- DIAGNOSTIC (remove after confirming fix) ---
+        print(f"[GEOM_LOAD] user_id={userID} org_id={org_id} layer_ids({len(layer_ids)})={layer_ids}")
+        total_in_layers   = Survey_Rep_DATA_Model.objects.filter(layer_id__in=layer_ids).count()
+        total_status_true = Survey_Rep_DATA_Model.objects.filter(layer_id__in=layer_ids, status=True).count()
+        total_org_match   = Survey_Rep_DATA_Model.objects.filter(layer_id__in=layer_ids, status=True, org_id=org_id).count()
+        total_with_geom   = Survey_Rep_DATA_Model.objects.filter(layer_id__in=layer_ids, status=True, org_id=org_id, geom__isnull=False).count()
+        print(f"[GEOM_LOAD] filter funnel → in_layers={total_in_layers} | +status=True:{total_status_true} | +org_match:{total_org_match} | +has_geom:{total_with_geom}")
+        # --- END DIAGNOSTIC ---
 
         # Use the retrieved layer_ids to filter Survey_Rep_DATA_Model
         # Exclude null-geometry records — these are legacy LADM records imported
