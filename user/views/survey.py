@@ -22,6 +22,7 @@ from django.core.files.base import ContentFile
 from django.contrib.gis.geos import GEOSGeometry
 from django.contrib.gis.db.models.functions import Area, Intersection as GeoIntersection
 
+
 import json, os, time, logging
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ class Survey_Rep_DATA_Save_View(APIView):
         logger.debug(f"[SAVE⏱] Role lookup: {(time.perf_counter()-_t)*1000:.1f}ms")
 
         if not isinstance(data, list):
-            return Response({"Expected a list of GEOM DATA"}, status=400)
+            return Response({"error": "Expected a list of GEOM DATA"}, status=400)
 
         # --- Hoist per-request queries outside the loop ---
         _t = time.perf_counter()
@@ -301,6 +302,7 @@ class Survey_Rep_DATA_Save_View(APIView):
                     else:
                         logger.debug(f"[SAVE] [{index}] Serializer validation FAILED: {serializer.errors}")
                         errors.append({"index": index, "errors": serializer.errors})
+                        continue 
                 except Exception as e:
                         logger.debug(f"[SAVE] [{index}] Exception during save: {e}", exc_info=True)
                         errors.append({"index": index, "detail": str(e)})
@@ -324,43 +326,52 @@ class Survey_Rep_DATA_Filter_User_View(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
+def post(self, request):
+    from django.db import connection
+    from django.http import JsonResponse
+    from django.db.models import Q
 
-        user_obj = request.user
-        userID = user_obj.id # Retrieve userID from the User model
-        org_id = user_obj.org_id
+    user_obj = request.user
+    userID = user_obj.id
+    org_id = user_obj.org_id
 
-        layer_ids = list(LayersModel.objects.filter(
-            Q(group_name__contains=["default"]) |
-            Q(group_name__contains=[userID]) |
-            (Q(group_name__contains=["org"]) & Q(org_id=org_id)) |
-            Q(user_id=userID)
-        ).values_list('layer_id', flat=True))
+    layer_ids = list(LayersModel.objects.filter(
+        Q(group_name__contains=["default"]) |
+        Q(group_name__contains=[userID]) |
+        (Q(group_name__contains=["org"]) & Q(org_id=org_id)) |
+        Q(user_id=userID)
+    ).values_list('layer_id', flat=True))
 
-        # --- DIAGNOSTIC (remove after confirming fix) ---
-        print(f"[GEOM_LOAD] user_id={userID} org_id={org_id} layer_ids({len(layer_ids)})={layer_ids}")
-        total_in_layers   = Survey_Rep_DATA_Model.objects.filter(layer_id__in=layer_ids).count()
-        total_status_true = Survey_Rep_DATA_Model.objects.filter(layer_id__in=layer_ids, status=True).count()
-        total_org_match   = Survey_Rep_DATA_Model.objects.filter(layer_id__in=layer_ids, status=True, org_id=org_id).count()
-        total_with_geom   = Survey_Rep_DATA_Model.objects.filter(layer_id__in=layer_ids, status=True, org_id=org_id, geom__isnull=False).count()
-        print(f"[GEOM_LOAD] filter funnel → in_layers={total_in_layers} | +status=True:{total_status_true} | +org_match:{total_org_match} | +has_geom:{total_with_geom}")
-        # --- END DIAGNOSTIC ---
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            SELECT json_build_object(
+                'type', 'FeatureCollection',
+                'features', COALESCE(json_agg(
+                    json_build_object(
+                        'type',       'Feature',
+                        'geometry',   ST_AsGeoJSON(geom, 6)::json,
+                        'properties', json_build_object(
+                            'id',               id,
+                            'su_id',            su_id,
+                            'uuid',             uuid,
+                            'layer_id',         layer_id,
+                            'gnd_id',           gnd_id,
+                            'calculated_area',  calculated_area,
+                            'parent_id',        parent_id,
+                            'status',           status
+                        )
+                    )
+                ), '[]'::json)
+            )
+            FROM survey_rep
+            WHERE layer_id = ANY(%s)
+              AND status   = TRUE
+              AND org_id   = %s
+              AND geom IS NOT NULL
+        """, [layer_ids, org_id])
+        result = cursor.fetchone()[0]
 
-        # Use the retrieved layer_ids to filter Survey_Rep_DATA_Model
-        # Exclude null-geometry records — these are legacy LADM records imported
-        # without spatial data.  Sending them to the frontend causes console spam
-        # and wastes bandwidth since they can never be rendered.
-        geom_data = list(Survey_Rep_DATA_Model.objects.filter(
-            layer_id__in=layer_ids,
-            status=True,
-            org_id=org_id,
-            geom__isnull=False,
-        ).only('id', 'su_id', 'uuid', 'layer_id', 'gnd_id', 'calculated_area', 'parent_id', 'status', 'geom'))
-
-        # Serialize geom data — lean serializer sends only map-required fields
-        serializer = Survey_Rep_Map_Serializer(geom_data, many=True)
-        return Response(serializer.data, status=200)
-
+    return JsonResponse(result, safe=False)
 #------------------------------------------------------------------------------
 class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
     http_method_names = ['patch']
