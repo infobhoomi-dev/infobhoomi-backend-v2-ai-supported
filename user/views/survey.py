@@ -326,52 +326,52 @@ class Survey_Rep_DATA_Filter_User_View(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-def post(self, request):
-    from django.db import connection
-    from django.http import JsonResponse
-    from django.db.models import Q
+    def post(self, request):
+        from django.db import connection
+        from django.http import JsonResponse
+        from django.db.models import Q
 
-    user_obj = request.user
-    userID = user_obj.id
-    org_id = user_obj.org_id
+        user_obj = request.user
+        userID = user_obj.id
+        org_id = user_obj.org_id
 
-    layer_ids = list(LayersModel.objects.filter(
-        Q(group_name__contains=["default"]) |
-        Q(group_name__contains=[userID]) |
-        (Q(group_name__contains=["org"]) & Q(org_id=org_id)) |
-        Q(user_id=userID)
-    ).values_list('layer_id', flat=True))
+        layer_ids = list(LayersModel.objects.filter(
+            Q(group_name__contains=["default"]) |
+            Q(group_name__contains=[userID]) |
+            (Q(group_name__contains=["org"]) & Q(org_id=org_id)) |
+            Q(user_id=userID)
+        ).values_list('layer_id', flat=True))
 
-    with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT json_build_object(
-                'type', 'FeatureCollection',
-                'features', COALESCE(json_agg(
-                    json_build_object(
-                        'type',       'Feature',
-                        'geometry',   ST_AsGeoJSON(geom, 6)::json,
-                        'properties', json_build_object(
-                            'id',               id,
-                            'su_id',            su_id,
-                            'uuid',             uuid,
-                            'layer_id',         layer_id,
-                            'gnd_id',           gnd_id,
-                            'calculated_area',  calculated_area,
-                            'parent_id',        parent_id,
-                            'status',           status
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT json_build_object(
+                    'type', 'FeatureCollection',
+                    'features', COALESCE(json_agg(
+                        json_build_object(
+                            'type',       'Feature',
+                            'geometry',   ST_AsGeoJSON(geom, 6)::json,
+                            'properties', json_build_object(
+                                'id',               id,
+                                'su_id',            su_id,
+                                'uuid',             uuid,
+                                'layer_id',         layer_id,
+                                'gnd_id',           gnd_id,
+                                'calculated_area',  calculated_area,
+                                'parent_id',        parent_id,
+                                'status',           status
+                            )
                         )
-                    )
-                ), '[]'::json)
-            )
-            FROM survey_rep
-            WHERE layer_id = ANY(%s)
-              AND status   = TRUE
-              AND org_id   = %s
-              AND geom IS NOT NULL
-        """, [layer_ids, org_id])
-        result = cursor.fetchone()[0]
+                    ), '[]'::json)
+                )
+                FROM survey_rep
+                WHERE layer_id = ANY(%s)
+                AND status   = TRUE
+                AND org_id   = %s
+                AND geom IS NOT NULL
+            """, [layer_ids, org_id])
+            result = cursor.fetchone()[0]
 
-    return JsonResponse(result, safe=False)
+        return JsonResponse(result, safe=False)
 #------------------------------------------------------------------------------
 class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
     http_method_names = ['patch']
