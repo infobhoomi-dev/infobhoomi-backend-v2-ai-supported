@@ -43,7 +43,7 @@ _RRR_PERM_BUILDING = 162  # Building RRR section permission ID
 
 def _rrr_perm_for_su(su_id):
     """Return the correct RRR permission ID (59 or 162) for a spatial unit."""
-    sr = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).values('layer_id').first()
+    sr = Survey_Rep_DATA_Model.objects.filter(id=su_id).values('layer_id').first()
     if sr:
         if sr['layer_id'] in _LAND_LAYERS:
             return _RRR_PERM_LAND
@@ -374,7 +374,7 @@ class RRR_Data_get_View(APIView):
             return _rrr_permission_denied()
 
         # get parent_id from Survey_Rep_DATA_Model
-        survey_data = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).values("parent_id").first()
+        survey_data = Survey_Rep_DATA_Model.objects.filter(id=su_id).values("parent_id").first()
         parent_id_value = survey_data["parent_id"] if survey_data else None
 
 

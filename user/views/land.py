@@ -86,7 +86,7 @@ class Lnd_Summary_View(ListCreateAPIView):
             }
 
             # Step 4a: Get Land Area
-            land_area = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).first()
+            land_area = Survey_Rep_DATA_Model.objects.filter(id=su_id).first()
             land_area_data = {
                 "land_area": land_area.area if land_area else None
             }
@@ -168,18 +168,21 @@ class Lnd_Admin_Info_View(ListCreateAPIView):
             allowed_fields = [f for f, pid in FIELD_PERMISSION_MAP.items() if pid in _allowed_ids]
 
             # Step 4: Derive gnd_id from spatial intersection of the parcel polygon
-            # Falls back to stored gnd_id when the sl_gnd_10m table has no geometry column.
-            survey_data = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).first()
+            # Query by primary key (id) rather than the FK column (su_id) so that newly
+            # created parcels are found even when the trg_survey_rep_su_id trigger has
+            # not run (e.g. on backup-restored DBs where the trigger was not re-created).
+            survey_data = Survey_Rep_DATA_Model.objects.filter(id=su_id).first()
             gnd_id = None
             if survey_data and survey_data.geom:
                 from django.db import transaction as _tx
                 _geom_sid = _tx.savepoint()
                 try:
                     gnd_match = sl_gnd_10m_Model.objects.filter(geom__intersects=survey_data.geom).first()
-                    gnd_id = gnd_match.gid if gnd_match else None
+                    # Fall back to stored gnd_id when spatial intersection finds no match
+                    gnd_id = gnd_match.gid if gnd_match else survey_data.gnd_id
                     # Cache result back to survey_rep so other queries stay consistent
                     if gnd_id and survey_data.gnd_id != gnd_id:
-                        Survey_Rep_DATA_Model.objects.filter(su_id=su_id).update(gnd_id=gnd_id)
+                        Survey_Rep_DATA_Model.objects.filter(id=su_id).update(gnd_id=gnd_id)
                     _tx.savepoint_commit(_geom_sid)
                 except Exception:
                     _tx.savepoint_rollback(_geom_sid)
@@ -487,7 +490,7 @@ class Lnd_Overview_Update_View(APIView):
                 try:
                     from django.contrib.gis.geos import Point
                     lon, lat = [float(x.strip()) for x in str(request.data['reference_coordinate']).split(',')]
-                    survey = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).first()
+                    survey = Survey_Rep_DATA_Model.objects.filter(id=su_id).first()
                     if survey:
                         survey.reference_coordinate = Point(lon, lat, srid=4326)
                         survey.save(update_fields=['reference_coordinate'])
@@ -729,7 +732,7 @@ _RRR_PERM_BUILDING = 162  # Building RRR section permission ID
 
 def _rrr_perm_for_su(su_id):
     """Return the correct RRR permission ID (59 or 162) for a spatial unit."""
-    sr = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).values('layer_id').first()
+    sr = Survey_Rep_DATA_Model.objects.filter(id=su_id).values('layer_id').first()
     if sr:
         if sr['layer_id'] in _LAND_LAYERS:
             return _RRR_PERM_LAND

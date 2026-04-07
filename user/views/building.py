@@ -157,7 +157,7 @@ class Bld_Admin_Info_View(ListCreateAPIView):
             ]
 
             # Step 3: Get survey rep record
-            survey_data = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).first()
+            survey_data = Survey_Rep_DATA_Model.objects.filter(id=su_id).first()
             gnd_id = survey_data.gnd_id if survey_data else None
 
             # Step 4: GND details
@@ -309,7 +309,7 @@ class Bld_Admin_Info_Update_View(APIView):
 
             # 6. Update Survey_Rep_DATA_Model
             if "gnd_id" in filtered_data:
-                survey_unit = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).first()
+                survey_unit = Survey_Rep_DATA_Model.objects.filter(id=su_id).first()
                 if survey_unit:
                     original = survey_unit.__dict__.copy()
                     serializer = Survey_Rep_DATA_Serializer(survey_unit, data={"gnd_id": filtered_data["gnd_id"]}, partial=True)
@@ -387,7 +387,7 @@ class Bld_Overview_View(APIView):
             ]
 
             # Step 4: Get Survey Rep data
-            survey_instance = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).first()
+            survey_instance = Survey_Rep_DATA_Model.objects.filter(id=su_id).first()
             survey_data_dict = {
                 "dimension_2d_3d": None,
                 "area": None,
@@ -480,7 +480,7 @@ class Bld_Overview_Update_View(APIView):
 
             # Step 7: Save area to Survey_Rep_DATA_Model if permitted
             if "area" in update_data and update_data["area"] not in (None, ""):
-                survey_unit = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).first()
+                survey_unit = Survey_Rep_DATA_Model.objects.filter(id=su_id).first()
                 if survey_unit:
                     try:
                         survey_unit.area = update_data["area"]
