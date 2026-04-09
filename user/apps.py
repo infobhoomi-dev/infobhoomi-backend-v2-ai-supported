@@ -6,6 +6,9 @@ class UserConfig(AppConfig):
     name = 'user'
 
     def ready(self):
+
+        import user.signals  # ←  registers pre_delete signal
+
         from django.db.models.signals import post_migrate
         post_migrate.connect(_ensure_gnd_geom_column, sender=self)
 

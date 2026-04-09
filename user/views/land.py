@@ -86,9 +86,9 @@ class Lnd_Summary_View(ListCreateAPIView):
             }
 
             # Step 4a: Get Land Area
-            land_area = Survey_Rep_DATA_Model.objects.filter(id=su_id).first()
+            land_area = Survey_Rep_DATA_Model.objects.filter(su_id=su_id).first()
             land_area_data = {
-                "land_area": land_area.area if land_area else None
+                "land_area": land_area.calculated_area if land_area else None
             }
 
             # Step 5: Get assessment data

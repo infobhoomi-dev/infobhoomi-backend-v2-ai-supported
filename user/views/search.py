@@ -305,7 +305,7 @@ class Query_Parcels_View(APIView):
             feat = {
                 'su_id':            su_id,
                 'layer_id':         record.layer_id,
-                'area_m2':          float(record.area) if record.area else None,
+                'area_m2':          float(record.calculated_area) if record.calculated_area else None,
                 'geojson':          geom_json,
                 'assessment_value': float(ass.assessment_annual_value) if ass and ass.assessment_annual_value is not None else None,
                 'market_value':     float(ass.market_value)            if ass and ass.market_value is not None else None,

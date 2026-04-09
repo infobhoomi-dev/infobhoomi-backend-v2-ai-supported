@@ -1,3 +1,4 @@
+from requests import request
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, ListCreateAPIView, RetrieveAPIView, RetrieveUpdateDestroyAPIView, RetrieveUpdateAPIView
 from rest_framework import generics, status
@@ -280,6 +281,10 @@ class Survey_Rep_DATA_Save_View(APIView):
                         # empty placeholder rows for parcels that are never annotated.
                         LA_Spatial_Unit_Model.objects.create(su_id=survey_rep.id)
                         logger.debug(f"[SAVE⏱]   Spatial unit INSERT: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+                        # Persist su_id FK to DB — fallback for envs without the
+                        # trg_survey_rep_su_id trigger (e.g. local dev / restored DBs).
+                        Survey_Rep_DATA_Model.objects.filter(id=survey_rep.id).update(su_id_id=survey_rep.id)
                         logger.debug(f"[SAVE⏱] ── Feature [{index}] total: {(time.perf_counter()-_t_feat)*1000:.1f}ms")
 
                         # Return only the fields the frontend needs to update feature IDs/metadata.
@@ -622,24 +627,35 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
 
             # Delete LA_Spatial_Unit_Model for this su_id
             _t2 = time.perf_counter()
-            n = LA_Spatial_Unit_Model.objects.filter(su_id=su_id).delete()[0]
-            total_deleted += n
-            logger.debug(f"[DELETE⏱]   DELETE LA_Spatial_Unit (n={n}): {(time.perf_counter()-_t2)*1000:.1f}ms")
+            deleted_by_id = getattr(request, 'user', None)
+            deleted_by_id = deleted_by_id.id if deleted_by_id else None
+            
 
             # Delete ref_id-related Survey_Rep_DATA_Model and LA_Spatial_Unit_Model
             _t2 = time.perf_counter()
+            for su_instance in LA_Spatial_Unit_Model.objects.filter(su_id=su_id):
+                su_instance._deleted_by = deleted_by_id
+                su_instance.delete()
+                total_deleted += 1
+            
             ref_qs = Survey_Rep_DATA_Model.objects.filter(ref_id=su_id)
             ref_ids = list(ref_qs.values_list("id", flat=True))
             n_ref = ref_qs.delete()[0]
-            n_ref_su = LA_Spatial_Unit_Model.objects.filter(su_id__in=ref_ids).delete()[0]
-            total_deleted += n_ref + n_ref_su
-            logger.debug(f"[DELETE⏱]   DELETE ref children (survey={n_ref}, spatial_units={n_ref_su}): {(time.perf_counter()-_t2)*1000:.1f}ms")
+            total_deleted += n_ref
+
+            # Delete child spatial units one by one (triggers archive signal for each)
+            for su_instance in LA_Spatial_Unit_Model.objects.filter(su_id__in=ref_ids):
+                su_instance._deleted_by = deleted_by_id
+                su_instance.delete()
+                total_deleted += 1
 
             # Delete the main record
             _t2 = time.perf_counter()
             primary.delete()
             total_deleted += 1
             logger.debug(f"[DELETE⏱]   DELETE primary record id={su_id}: {(time.perf_counter()-_t2)*1000:.1f}ms")
+
+
 
         except Survey_Rep_DATA_Model.DoesNotExist:
             logger.debug(f"[DELETE⏱]   id={su_id} not found — skipped")

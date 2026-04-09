@@ -61,7 +61,7 @@ class LA_LS_Zoning_Model(models.Model):
         'LA_Spatial_Unit_Model', on_delete=models.CASCADE,
         db_column='su_id', to_field='su_id'
     )
-    zoning_category     = models.CharField(max_length=10, null=True)
+    zoning_category     = models.CharField(max_length=100, null=True)
     max_building_height = models.DecimalField(max_digits=8, decimal_places=2, null=True)
     max_coverage        = models.DecimalField(max_digits=5, decimal_places=2, null=True)
     max_far             = models.DecimalField(max_digits=5, decimal_places=2, null=True)
@@ -84,7 +84,7 @@ class LA_LS_Physical_Env_Model(models.Model):
     elevation        = models.DecimalField(max_digits=10, decimal_places=3, null=True)  # metres
     slope            = models.DecimalField(max_digits=5, decimal_places=2, null=True)   # degrees
     soil_type        = models.CharField(max_length=20, null=True)  # CLAY/SAND/LOAM/SILT/ROCK/PEAT/FILL
-    flood_zone       = models.BooleanField(null=True)
+    flood_zone       = models.CharField(max_length=20, null=True)  # Low/Medium/High/None
     vegetation_cover = models.CharField(max_length=255, null=True)
 
     class Meta:

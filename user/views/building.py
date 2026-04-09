@@ -787,14 +787,14 @@ class Tax_Assessment_Update_View(APIView):
             }
 
             # Step 3: Determine allowed update fields
-            allowed_fields = [
-                field for field, perm_id in FIELD_PERMISSION_MAP.items()
-                if Role_Permission_Model.objects.filter(
+            _edit_ids = set(
+                Role_Permission_Model.objects.filter(
                     role_id=role_id,
-                    permission_id=perm_id,
-                    edit=True
-                ).exists()
-            ]
+                    permission_id__in=FIELD_PERMISSION_MAP.values(),
+                    edit=True,
+                ).values_list('permission_id', flat=True)
+            )
+            allowed_fields = [f for f, pid in FIELD_PERMISSION_MAP.items() if pid in _edit_ids]
 
             # Step 4: Filter request data by allowed fields
             update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
