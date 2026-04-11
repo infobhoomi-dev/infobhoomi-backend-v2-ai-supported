@@ -641,6 +641,8 @@ class Lnd_Physical_Env_Update_View(APIView):
     }
 
     def patch(self, request, su_id):
+        import logging
+        _log = logging.getLogger('phys_env_update')
         try:
             user_roles = User_Roles_Model.objects.filter(users__contains=[request.user.id])
             if not user_roles.exists():
@@ -654,14 +656,44 @@ class Lnd_Physical_Env_Update_View(APIView):
                 ).values_list("permission_id", flat=True)
             )
             allowed_fields = [f for f, pid in self.FIELD_PERMISSION_MAP.items() if pid in _edit_ids]
+
+            # If no edit permissions at all, accept silently (nothing to save)
+            if not allowed_fields:
+                return Response({"detail": "No editable fields for this role."}, status=status.HTTP_200_OK)
+
             obj, _ = LA_LS_Physical_Env_Model.objects.get_or_create(su_id_id=su_id)
             update_data = {k: (None if v == '' else v) for k, v in request.data.items() if k in allowed_fields}
+
+            # ── Coerce numeric precision to match DecimalField constraints ──────
+            # elevation: max_digits=10, decimal_places=3
+            # slope:     max_digits=5,  decimal_places=2
+            # Frontend may send floats with excess precision (e.g. 45.123456789)
+            for field_name, dp in (('elevation', 3), ('slope', 2)):
+                if field_name in update_data and update_data[field_name] is not None:
+                    try:
+                        update_data[field_name] = round(float(update_data[field_name]), dp)
+                    except (TypeError, ValueError):
+                        update_data[field_name] = None
+
+            # ── Normalise flood_zone: frontend sends boolean, DB is CharField ──
+            # Convert True→'High', False→'None' so stored value is meaningful
+            if 'flood_zone' in update_data:
+                fz = update_data['flood_zone']
+                if isinstance(fz, bool):
+                    update_data['flood_zone'] = 'High' if fz else 'None'
+                elif fz is None:
+                    update_data['flood_zone'] = None
+
             serializer = LA_LS_Physical_Env_Serializer(obj, data=update_data, partial=True)
             if serializer.is_valid():
                 serializer.save()
                 return Response({"detail": "Physical/environmental data updated successfully."}, status=status.HTTP_200_OK)
+
+            _log.error("Physical env validation errors su_id=%s data=%s errors=%s",
+                       su_id, update_data, serializer.errors)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
+            _log.exception("Physical env update exception su_id=%s", su_id)
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
