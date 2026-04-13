@@ -69,7 +69,7 @@ class Survey_Rep_DATA_Model(gismodels.Model):
 
     status = models.BooleanField(null=False, default=True)
     parent_id = ArrayField(models.IntegerField(), null=True)
-    ref_id = models.IntegerField(null=True, db_column='ref_ids')
+    ref_id = models.IntegerField(null=True)
 
     date_created = models.DateTimeField(auto_now_add=True)
     date_modified = models.DateTimeField(null=True)

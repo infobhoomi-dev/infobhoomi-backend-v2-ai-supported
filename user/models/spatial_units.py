@@ -142,6 +142,13 @@ class LA_LS_Build_Unit_Model(models.Model):
     house_hold_no = models.CharField(max_length=25, null=True)
     no_floors = models.IntegerField(null=True)
 
+    # ── Strata / Apartment unit fields (populated for layer_id=12 child units) ──
+    floor_no   = models.IntegerField(null=True)          # which floor this unit occupies
+    floor_area = models.DecimalField(max_digits=10, decimal_places=2, null=True)  # unit area m²
+    apt_name   = models.CharField(max_length=255, null=True)  # unit label e.g. "3B"
+    # 3D solid geometry — populated by the 3D Cadastre project for cross-platform viz
+    geom_3d    = gismodels.GeometryField(dim=3, srid=4326, null=True)
+
     ext_builduse_type = models.CharField(max_length=100, null=True)
     ext_builduse_sub_type = models.CharField(max_length=100, null=True)
 

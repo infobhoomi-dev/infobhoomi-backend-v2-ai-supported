@@ -370,7 +370,7 @@ class Survey_Rep_DATA_Filter_User_View(APIView):
                 )
                 FROM survey_rep
                 WHERE layer_id = ANY(%s)
-                AND status   = TRUE
+                AND status::text NOT IN ('false', 'False', 'f', '0', 'no', 'off')
                 AND org_id   = %s
                 AND geom IS NOT NULL
             """, [layer_ids, org_id])
@@ -387,84 +387,99 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
     serializer_class = Survey_Rep_DATA_Serializer
 
     def update(self, request, *args, **kwargs):
+            import copy
+            import time
+            import logging
+            from django.db import transaction
+            from django.utils.timezone import now
+            from rest_framework.response import Response
+            
+            # Note: I am assuming Area and GeoIntersection are already imported at the top of your file.
+            # If not, ensure: from django.contrib.gis.db.models.functions import Area, Intersection as GeoIntersection
 
-        import copy as _copy
-        logger = logging.getLogger('survey_rep_update')
+            logger = logging.getLogger('survey_rep_update')
 
-        _t_start = time.perf_counter()
-        data = request.data
-        user = request.user
-        user_id = user.id
-        feature_id = kwargs.get('pk', '?')
-        logger.debug(f"[UPDATE⏱] ── PATCH id={feature_id} user_id={user_id}")
+            _t_start = time.perf_counter()
+            user = request.user
+            user_id = user.id
+            feature_id = kwargs.get('pk', '?')
+            logger.debug(f"[UPDATE⏱] ── PATCH id={feature_id} user_id={user_id}")
 
-        # 🔐 Step 1: Check if user has edit permission
-        _t = time.perf_counter()
-        edit_permission_id = 201
-
-        user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
-        if not user_roles.exists():
-            return Response({"error": "User has no assigned roles."}, status=403)
-
-        role_id = user_roles.values_list('role_id', flat=True).first()
-
-        has_permission = Role_Permission_Model.objects.filter(
-            role_id=role_id,
-            permission_id=edit_permission_id,
-            edit=True
-        ).exists()
-
-        if not has_permission:
-            return Response({"error": "You do not have permission."}, status=403)
-        logger.debug(f"[UPDATE⏱] Step 1 — permission check: {(time.perf_counter()-_t)*1000:.1f}ms")
-
-        # Step 2: Fetch org area once — reused in both polygon and point/line GND branches
-        _t = time.perf_counter()
-        org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
-        logger.debug(f"[UPDATE⏱] Step 2 — org area fetch: {(time.perf_counter()-_t)*1000:.1f}ms")
-
-        with transaction.atomic():
-            # Step 3: Fetch instance + snapshot old data
+            # 🔐 Step 1: Check if user has edit permission
             _t = time.perf_counter()
-            instance = self.get_object()
-            logger.debug(f"[UPDATE⏱] Step 3 — get_object(): {(time.perf_counter()-_t)*1000:.1f}ms | geom_type={instance.geom_type} layer_id={instance.layer_id}")
+            edit_permission_id = 201
 
-            old_data = {
-                "user_id": instance.user_id,
-                "layer_id": instance.layer_id,
-                "calculated_area": instance.calculated_area,
-                "reference_coordinate": instance.reference_coordinate,
-                "geom": instance.geom,
-                "status": instance.status,
-                "ref_id": instance.ref_id,
-            }
+            user_roles = User_Roles_Model.objects.filter(users__contains=[user_id])
+            if not user_roles.exists():
+                return Response({"error": "User has no assigned roles."}, status=403)
 
-            # Ensure gnd_id is not null in the request payload before serializer
-            # validation runs.  The frontend sends null when geometry is edited
-            # (gnd_id is unknown until spatial detection runs post-update).
-            # We temporarily inject the instance's current value so validation
-            # passes; the post-update block below will re-enforce the correct
-            # gnd_id based on the new geometry.
-            _raw = request.data
-            _props = _raw.get('properties', {}) if isinstance(_raw, dict) else {}
-            if not _props.get('gnd_id'):
-                _mutable = _copy.deepcopy(dict(_raw))
-                _mutable.setdefault('properties', {})['gnd_id'] = instance.gnd_id
-                request._full_data = _mutable
+            role_id = user_roles.values_list('role_id', flat=True).first()
 
-            # Step 4: DRF serializer validate + write geometry to DB
+            has_permission = Role_Permission_Model.objects.filter(
+                role_id=role_id,
+                permission_id=edit_permission_id,
+                edit=True
+            ).exists()
+
+            if not has_permission:
+                return Response({"error": "You do not have permission."}, status=403)
+            logger.debug(f"[UPDATE⏱] Step 1 — permission check: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+            # Step 2: Fetch org area once
             _t = time.perf_counter()
-            super().update(request, *args, **kwargs)
-            logger.debug(f"[UPDATE⏱] Step 4 — serializer validate + DB write (super().update): {(time.perf_counter()-_t)*1000:.1f}ms")
+            org_area_obj = Org_Area_Model.objects.filter(org_id=user.org_id).first()
+            logger.debug(f"[UPDATE⏱] Step 2 — org area fetch: {(time.perf_counter()-_t)*1000:.1f}ms")
 
-            # Step 5: Refresh instance with what was just written
+            with transaction.atomic():
+                # Step 3: Fetch instance + snapshot old data
+                _t = time.perf_counter()
+                instance = self.get_object()
+                logger.debug(f"[UPDATE⏱] Step 3 — get_object(): {(time.perf_counter()-_t)*1000:.1f}ms | geom_type={instance.geom_type} layer_id={instance.layer_id}")
+
+                old_data = {
+                    "user_id": instance.user_id,
+                    "layer_id": instance.layer_id,
+                    "calculated_area": instance.calculated_area,
+                    "reference_coordinate": instance.reference_coordinate,
+                    "geom": instance.geom,
+                    "status": instance.status,
+                    "ref_id": instance.ref_id,
+                }
+
+            # Step 4: DRF Validate + MANUAL Assignment (Bypassing serializer.save!)
             _t = time.perf_counter()
-            instance.refresh_from_db()
-            logger.debug(f"[UPDATE⏱] Step 5 — refresh_from_db: {(time.perf_counter()-_t)*1000:.1f}ms")
-
-            # Accumulate all post-update field changes; flush with one save() at end.
+            
+            partial_update = kwargs.get('partial', True)
+            serializer = self.get_serializer(instance, data=request.data, partial=partial_update)
+            serializer.is_valid(raise_exception=True)
+            
             fields_to_save = ['date_modified']
             instance.date_modified = now()
+
+            # Get a list of actual database columns to prevent frontend garbage (like isUpdateOnly) from crashing the save
+            valid_model_fields = [f.name for f in instance._meta.get_fields()]
+
+            # Apply data to the instance manually
+            for attr, value in serializer.validated_data.items():
+                if attr in valid_model_fields:
+                    # Force string booleans to actual booleans!
+                    if isinstance(value, str):
+                        val_clean = value.strip().lower()
+                        if val_clean == 'true': 
+                            value = True
+                        elif val_clean == 'false': 
+                            value = False
+                    
+                    # Prevent overwriting existing valid data with nulls
+                    if value is None and getattr(instance, attr) is not None:
+                        continue 
+                    
+                    setattr(instance, attr, value)
+                    fields_to_save.append(attr)
+
+            logger.debug(f"[UPDATE⏱] Step 4 — validate & manual assignment: {(time.perf_counter()-_t)*1000:.1f}ms")
+
+            # NOTE: Step 5 (refresh_from_db) is DELETED because we updated the instance in memory!
 
             # Step 6: Recalculate area/length from updated geometry
             _t = time.perf_counter()
@@ -481,7 +496,8 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                     instance.calculated_area = round(_geom_projected.length, 4)
                 else:
                     instance.calculated_area = 0
-                fields_to_save.append('calculated_area')
+                if 'calculated_area' not in fields_to_save:
+                    fields_to_save.append('calculated_area')
             logger.debug(f"[UPDATE⏱] Step 6 — area/length recalculation: {(time.perf_counter()-_t)*1000:.1f}ms")
 
             # Step 7: GND detection after geometry update
@@ -491,12 +507,11 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                 is_land_parcel = layer_id_val in [1, 6]
                 try:
                     with transaction.atomic():
-                        # Fast path: centroid point-in-polygon (uses spatial index, no area computation)
                         centroid = instance.geom.centroid
                         dominant_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=centroid).first()
                         _gnd_path = 'centroid'
                         if not dominant_gnd:
-                            # Slow fallback: parcel straddles a GND boundary — find dominant by intersection area
+                            from django.contrib.gis.db.models.functions import Area, Intersection as GeoIntersection
                             dominant_gnd = (
                                 sl_gnd_10m_Model.objects
                                 .filter(geom__intersects=instance.geom)
@@ -520,12 +535,12 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                                         {"error": "Cannot update land parcel: geometry falls outside your organisation's allowed GND area."},
                                         status=400
                                     )
-                            else:
-                                instance.gnd_id = dominant_gnd.gid
-                                fields_to_save.append('gnd_id')
+                                else:
+                                    instance.gnd_id = dominant_gnd.gid
+                                    if 'gnd_id' not in fields_to_save: fields_to_save.append('gnd_id')
                         else:
                             instance.gnd_id = dominant_gnd.gid
-                            fields_to_save.append('gnd_id')
+                            if 'gnd_id' not in fields_to_save: fields_to_save.append('gnd_id')
                 except Exception:
                     logger.debug(f"[UPDATE⏱] Step 7 — GND detect exception after {(time.perf_counter()-_t)*1000:.1f}ms", exc_info=True)
                     if is_land_parcel:
@@ -549,17 +564,17 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                                 status=400
                             )
                     instance.gnd_id = containing_gnd.gid
-                    fields_to_save.append('gnd_id')
+                    if 'gnd_id' not in fields_to_save: fields_to_save.append('gnd_id')
                 except Exception:
                     logger.debug(f"[UPDATE⏱] Step 7 — GND detect exception after {(time.perf_counter()-_t)*1000:.1f}ms", exc_info=True)
                     raise
             else:
                 logger.debug(f"[UPDATE⏱] Step 7 — GND detect skipped (no geom): 0.0ms")
 
-            # Step 8: Single DB write for all post-update field changes
+            # Step 8: THE ONLY DB WRITE! Commits everything we just updated in memory.
             _t = time.perf_counter()
             instance.save(update_fields=list(set(fields_to_save)))
-            logger.debug(f"[UPDATE⏱] Step 8 — save({fields_to_save}): {(time.perf_counter()-_t)*1000:.1f}ms")
+            logger.debug(f"[UPDATE⏱] Step 8 — save({list(set(fields_to_save))}): {(time.perf_counter()-_t)*1000:.1f}ms")
 
             # Step 9: History comparison + optional INSERT
             _t = time.perf_counter()
@@ -575,22 +590,34 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
 
             history_written = False
             if old_data != new_data:
-                Survey_Rep_Geom_History_Model.objects.create(
-                    su_id=instance.id,
-                    user_id=instance.user_id,
-                    layer_id=instance.layer_id,
-                    calculated_area=instance.calculated_area,
-                    reference_coordinate=instance.reference_coordinate,
-                    geom=instance.geom,
-                    status=instance.status,
-                    ref_id=instance.ref_id,
-                )
+                # The database might already contain legacy string booleans (like "true") 
+                # in fields like 'status'. We must sanitize them before passing to the History table.
+                history_payload = {
+                    "su_id": instance.id,
+                    "user_id": instance.user_id,
+                    "layer_id": instance.layer_id,
+                    "calculated_area": instance.calculated_area,
+                    "reference_coordinate": instance.reference_coordinate,
+                    "geom": instance.geom,
+                    "status": instance.status,
+                    "ref_id": instance.ref_id,
+                }
+                
+                # Sanitize poisoned data from the DB
+                for k, v in history_payload.items():
+                    if isinstance(v, str):
+                        v_clean = v.strip().lower()
+                        if v_clean == 'true': history_payload[k] = True
+                        elif v_clean == 'false': history_payload[k] = False
+
+                Survey_Rep_Geom_History_Model.objects.create(**history_payload)
                 history_written = True
+                
             logger.debug(f"[UPDATE⏱] Step 9 — history write (written={history_written}): {(time.perf_counter()-_t)*1000:.1f}ms")
 
             logger.debug(f"[UPDATE⏱] ══ TOTAL: {(time.perf_counter()-_t_start)*1000:.1f}ms | id={feature_id} ══")
 
-            # Return lean response — no geometry re-serialization (mirrors save view)
+        # The final return is outside the atomic transaction block
             return Response({
                 "type": "Feature",
                 "geometry": None,
@@ -605,63 +632,179 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                     "parent_id": instance.parent_id,
                     "date_modified": instance.date_modified.isoformat() if instance.date_modified else None,
                 },
-            }, status=200)
-
+        }, status=200)
+                    
 #------------------------ Bulk DELETE by IDs ----------------------------------
 class Survey_Rep_DATA_BulkDelete_id_View(APIView):
     http_method_names = ['delete']
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
-    def delete_record_and_related(self, su_id, logger):
-        """Delete a single survey record and its related data. Permission must be verified before calling."""
+    # ── Helpers ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _snapshot(instance):
+        """Serialize a model instance to a JSON-safe dict (mirrors signals._snapshot)."""
+        import decimal
+        if instance is None:
+            return None
+        result = {}
+        for field in instance._meta.concrete_fields:
+            value = getattr(instance, field.attname, None)
+            if value is None:
+                result[field.name] = None
+            elif isinstance(value, decimal.Decimal):
+                result[field.name] = float(value)
+            elif hasattr(value, 'isoformat'):
+                result[field.name] = value.isoformat()
+            elif hasattr(value, 'wkt'):          # GEOSGeometry
+                result[field.name] = value.wkt
+            else:
+                result[field.name] = value
+        return result
+
+    def _archive_and_soft_delete_su(self, su_int_id, user_id, logger):
+        """
+        Soft-delete a single LA_Spatial_Unit_Model row identified by its su_id integer.
+
+        Steps:
+          1. Snapshot all attribute sub-tables → Parcel_Delete_Archive_Model
+          2. Soft-delete SL_BA_Unit_Model rows  (status=False)
+          3. Soft-delete LA_Spatial_Unit_Model   (status=False)
+
+        Physical deletion is intentionally avoided: SL_BA_Unit_Model.su_id uses
+        on_delete=PROTECT, so deleting the spatial unit while a BA unit exists
+        raises a ProtectedError.  Keeping the row and flipping status=False
+        satisfies the integrity constraint while logically removing the record.
+        """
+        from ..models.assessments import Assessment_Model, Tax_Info_Model
+        from ..models.history import Parcel_Delete_Archive_Model
+        from ..models.rrr import SL_BA_Unit_Model
+
+        try:
+            su_instance = LA_Spatial_Unit_Model.objects.get(su_id=su_int_id)
+        except LA_Spatial_Unit_Model.DoesNotExist:
+            logger.debug(f"[DELETE⏱]     LA_Spatial_Unit su_id={su_int_id} not found — skipped")
+            return
+
+        # 1. Snapshot attribute sub-tables
+        def _oto(name):
+            try:
+                return getattr(su_instance, name)
+            except Exception:
+                return None
+
+        land_unit    = _oto('la_ls_land_unit_model')
+        utility_lu   = _oto('la_ls_utinet_lu_model')
+        zoning       = _oto('la_ls_zoning_model')
+        physical_env = _oto('la_ls_physical_env_model')
+        build_unit   = _oto('la_ls_build_unit_model')
+        utility_bu   = _oto('la_ls_utinet_bu_model')
+        assessment   = Assessment_Model.objects.filter(su_id=su_int_id).order_by('-id').first()
+        tax_info     = Tax_Info_Model.objects.filter(su_id=su_int_id).order_by('-id').first()
+
+        Parcel_Delete_Archive_Model.objects.create(
+            su_id         = su_int_id,
+            label         = su_instance.label,
+            parcel_status = su_instance.parcel_status,
+            deleted_by    = user_id,
+            land_unit_data    = self._snapshot(land_unit),
+            assessment_data   = self._snapshot(assessment),
+            tax_info_data     = self._snapshot(tax_info),
+            utility_lu_data   = self._snapshot(utility_lu),
+            zoning_data       = self._snapshot(zoning),
+            physical_env_data = self._snapshot(physical_env),
+            build_unit_data   = self._snapshot(build_unit),
+            utility_bu_data   = self._snapshot(utility_bu),
+        )
+        logger.debug(f"[DELETE⏱]     archived su_id={su_int_id} → parcel_delete_archive")
+
+        # 2. Soft-delete administrative unit (avoids PROTECT on re-deletion attempts)
+        SL_BA_Unit_Model.objects.filter(su_id=su_int_id).update(status=False)
+
+        # 3. Soft-delete the spatial unit itself
+        su_instance.status = False
+        su_instance.save(update_fields=['status'])
+
+    def _archive_geom_history(self, survey_record, su_int_id, user_id):
+        """Snapshot geometry + write function-history 'delete' entry."""
+        # Geometry snapshot
+        Survey_Rep_Geom_History_Model.objects.create(
+            su_id               = su_int_id,
+            user_id             = user_id,
+            layer_id            = survey_record.layer_id,
+            calculated_area     = survey_record.calculated_area,
+            reference_coordinate= getattr(survey_record, 'reference_coordinate', None),
+            geom                = survey_record.geom,
+            status              = False,   # marks as a deletion snapshot
+            ref_id              = survey_record.ref_id,
+        )
+        # Function history entry
+        Survey_Rep_History_Model.objects.create(
+            su_id    = su_int_id,
+            tool     = 'delete',
+            user_id  = user_id,
+        )
+
+    # ── Main soft-delete logic ─────────────────────────────────────────────────
+
+    def delete_record_and_related(self, survey_rep_id, user_id, logger):
+        """
+        Soft-delete a survey_rep row and its related spatial unit / sibling records.
+
+        'Soft-delete' means status=False is set; no SQL DELETE is issued.
+        This avoids the ProtectedError raised by SL_BA_Unit_Model.su_id
+        (on_delete=PROTECT) when a building with administrative data is removed.
+
+        All attribute data is archived to parcel_delete_archive and the geometry
+        is snapshotted to survey_rep_geom_history before the soft-delete.
+        """
         _t = time.perf_counter()
-        total_deleted = 0
+        total_affected = 0
         parent_ids = []
 
         try:
-            primary = Survey_Rep_DATA_Model.objects.get(id=su_id)
+            primary = Survey_Rep_DATA_Model.objects.get(id=survey_rep_id)
             parent_ids = primary.parent_id or []
-            _t2 = time.perf_counter()
-            logger.debug(f"[DELETE⏱]   fetch record id={su_id}: {(_t2-_t)*1000:.1f}ms")
+            # su_id_id gives the raw integer stored in the su_id FK column
+            primary_su_int = primary.su_id_id
 
-            # Delete LA_Spatial_Unit_Model for this su_id
-            _t2 = time.perf_counter()
-            deleted_by_id = getattr(request, 'user', None)
-            deleted_by_id = deleted_by_id.id if deleted_by_id else None
-            
+            logger.debug(
+                f"[DELETE⏱]   processing id={survey_rep_id} su_id={primary_su_int} "
+                f"layer={primary.layer_id}"
+            )
 
-            # Delete ref_id-related Survey_Rep_DATA_Model and LA_Spatial_Unit_Model
-            _t2 = time.perf_counter()
-            for su_instance in LA_Spatial_Unit_Model.objects.filter(su_id=su_id):
-                su_instance._deleted_by = deleted_by_id
-                su_instance.delete()
-                total_deleted += 1
-            
-            ref_qs = Survey_Rep_DATA_Model.objects.filter(ref_id=su_id)
-            ref_ids = list(ref_qs.values_list("id", flat=True))
-            n_ref = ref_qs.delete()[0]
-            total_deleted += n_ref
+            # ── 1. Archive + soft-delete the primary spatial unit ─────────────
+            if primary_su_int:
+                self._archive_and_soft_delete_su(primary_su_int, user_id, logger)
 
-            # Delete child spatial units one by one (triggers archive signal for each)
-            for su_instance in LA_Spatial_Unit_Model.objects.filter(su_id__in=ref_ids):
-                su_instance._deleted_by = deleted_by_id
-                su_instance.delete()
-                total_deleted += 1
+            # ── 2. Geometry + function history for primary record ─────────────
+            self._archive_geom_history(primary, primary_su_int or survey_rep_id, user_id)
 
-            # Delete the main record
-            _t2 = time.perf_counter()
-            primary.delete()
-            total_deleted += 1
-            logger.debug(f"[DELETE⏱]   DELETE primary record id={su_id}: {(time.perf_counter()-_t2)*1000:.1f}ms")
+            # ── 3. Handle child / sibling records (ref_id links) ─────────────
+            ref_survey_qs = Survey_Rep_DATA_Model.objects.filter(ref_id=survey_rep_id)
+            for ref_rec in ref_survey_qs:
+                ref_su_int = ref_rec.su_id_id
+                if ref_su_int:
+                    self._archive_and_soft_delete_su(ref_su_int, user_id, logger)
+                self._archive_geom_history(ref_rec, ref_su_int or ref_rec.id, user_id)
+                ref_rec.status = False
+                ref_rec.save(update_fields=['status'])
+                total_affected += 1
 
-
+            # ── 4. Soft-delete the primary survey_rep record ──────────────────
+            primary.status = False
+            primary.save(update_fields=['status'])
+            total_affected += 1
 
         except Survey_Rep_DATA_Model.DoesNotExist:
-            logger.debug(f"[DELETE⏱]   id={su_id} not found — skipped")
+            logger.debug(f"[DELETE⏱]   id={survey_rep_id} not found — skipped")
 
-        logger.debug(f"[DELETE⏱]   record id={su_id} total: {(time.perf_counter()-_t)*1000:.1f}ms | rows_deleted={total_deleted}")
-        return total_deleted, parent_ids
+        logger.debug(
+            f"[DELETE⏱]   id={survey_rep_id} done in "
+            f"{(time.perf_counter()-_t)*1000:.1f}ms | rows_affected={total_affected}"
+        )
+        return total_affected, parent_ids
 
     def delete(self, request):
         logger = logging.getLogger('survey_rep_delete')
@@ -694,47 +837,63 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
             return Response({"error": "You do not have delete permission."}, status=403)
         logger.debug(f"[DELETE⏱] Step 1 — permission check: {(time.perf_counter()-_t)*1000:.1f}ms")
 
-        total_deleted = 0
-        deleted_ids = set()
-        parent_ids_to_update = set()
+        total_affected = 0
+        processed_ids = set()
+        parent_ids_to_restore = set()
 
-        # Step 2: Delete each requested record
-        for su_id in su_ids:
-            if su_id in deleted_ids:
+        # Step 2: Soft-delete each requested record
+        for survey_rep_id in su_ids:
+            if survey_rep_id in processed_ids:
                 continue
 
-            logger.debug(f"[DELETE⏱] Step 2 — processing id={su_id}")
-            deleted, parent_ids = self.delete_record_and_related(su_id, logger)
-            total_deleted += deleted
-            deleted_ids.add(su_id)
+            logger.debug(f"[DELETE⏱] Step 2 — processing id={survey_rep_id}")
+            affected, parent_ids = self.delete_record_and_related(survey_rep_id, user_id, logger)
+            total_affected += affected
+            processed_ids.add(survey_rep_id)
 
-            # Step 3: Resolve and delete siblings
+            # Step 3: Soft-delete sibling records (same parent)
             if len(parent_ids) == 1:
                 parent_id = parent_ids[0]
                 _t = time.perf_counter()
+                
+                # Fetch all siblings WITHOUT the status filter to avoid Postgres schema crashes
                 siblings = Survey_Rep_DATA_Model.objects.filter(parent_id__contains=[parent_id])
-                sibling_ids = [s.id for s in siblings if s.id not in deleted_ids]
-                logger.debug(f"[DELETE⏱] Step 3 — sibling query (parent_id={parent_id}, found={len(sibling_ids)}): {(time.perf_counter()-_t)*1000:.1f}ms")
+                
+                # Filter for the active status safely in Python
+                sibling_ids = [
+                    s.id for s in siblings 
+                    if s.id not in processed_ids and str(s.status).strip().lower() in ['true', '1', 't']
+                ]
+                logger.debug(
+                    f"[DELETE⏱] Step 3 — sibling query (parent_id={parent_id}, "
+                    f"found={len(sibling_ids)}): {(time.perf_counter()-_t)*1000:.1f}ms"
+                )
                 for sib_id in sibling_ids:
-                    d, _ = self.delete_record_and_related(sib_id, logger)
-                    total_deleted += d
-                    deleted_ids.add(sib_id)
+                    a, _ = self.delete_record_and_related(sib_id, user_id, logger)
+                    total_affected += a
+                    processed_ids.add(sib_id)
 
-                parent_ids_to_update.add(parent_id)
+                parent_ids_to_restore.add(parent_id)
 
             elif len(parent_ids) > 1:
-                parent_ids_to_update.update(parent_ids)
+                parent_ids_to_restore.update(parent_ids)
 
-        # Step 4: Restore parent status
-        if parent_ids_to_update:
+        # Step 4: Restore parent status (split/merge parent becomes active again)
+        if parent_ids_to_restore:
             _t = time.perf_counter()
-            Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids_to_update).update(status=True)
-            logger.debug(f"[DELETE⏱] Step 4 — restore parent status (ids={list(parent_ids_to_update)}): {(time.perf_counter()-_t)*1000:.1f}ms")
+            Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids_to_restore).update(status=True)
+            logger.debug(
+                f"[DELETE⏱] Step 4 — restore parent status "
+                f"(ids={list(parent_ids_to_restore)}): {(time.perf_counter()-_t)*1000:.1f}ms"
+            )
 
-        logger.debug(f"[DELETE⏱] ══ TOTAL: {(time.perf_counter()-_t_start)*1000:.1f}ms | deleted_ids={list(deleted_ids)} rows={total_deleted} ══")
+        logger.debug(
+            f"[DELETE⏱] ══ TOTAL: {(time.perf_counter()-_t_start)*1000:.1f}ms | "
+            f"processed={list(processed_ids)} rows_affected={total_affected} ══"
+        )
 
         return Response(
-            {"message": f"Records deleted. {total_deleted} total record(s) affected."},
+            {"message": f"Records soft-deleted. {total_affected} record(s) deactivated."},
             status=status.HTTP_200_OK
         )
 

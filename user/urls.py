@@ -235,6 +235,16 @@ urlpatterns = [
     path('bld-utinet-info/su_id=<int:su_id>/', Bld_Utility_Network_Info_View.as_view()),
     path('bld-utinet-info/update/su_id=<int:su_id>/', Bld_Utility_Network_Info_Update_View.as_view()),
 
+#__ Building Units (Strata / Apartment — layer_id=12) __
+    # GET  /bld-units/?parent_su_id=<int>   — list units for a building
+    path('bld-units/', Bld_Units_List_View.as_view()),
+    # GET  /bld-unit/su_id=<int>/           — single unit detail
+    path('bld-unit/su_id=<int:su_id>/', Bld_Unit_Detail_View.as_view()),
+    # POST /bld-unit/create/                — create a new unit
+    path('bld-unit/create/', Bld_Unit_Create_View.as_view()),
+    # PATCH /bld-unit/update/su_id=<int>/  — update unit attributes
+    path('bld-unit/update/su_id=<int:su_id>/', Bld_Unit_Update_View.as_view()),
+
 
 #__ Tax & Assessment Info __
     path('tax-assess-info/su_id=<int:su_id>/', Tax_Assessment_View.as_view()), # Get Tax & Assessment Information
