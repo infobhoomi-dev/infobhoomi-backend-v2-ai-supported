@@ -138,7 +138,7 @@ class Query_Parcels_View(APIView):
 
     # field_name → (source, db_field, value_type)
     LAND_FIELDS = {
-        'area_m2':          ('survey',     'area',                   'decimal'),
+        'area_m2':          ('survey',     'calculated_area',        'decimal'),
         'land_name':        ('land_unit',  'land_name',              'string'),
         'access_road':      ('land_unit',  'access_road',            'string'),
         'sl_land_type':     ('land_unit',  'sl_land_type',           'string'),
@@ -150,7 +150,7 @@ class Query_Parcels_View(APIView):
     }
 
     BUILDING_FIELDS = {
-        'area_m2':            ('survey',     'area',                   'decimal'),
+        'area_m2':            ('survey',     'calculated_area',        'decimal'),
         'building_name':      ('build_unit', 'building_name',          'string'),
         'no_floors':          ('build_unit', 'no_floors',              'int'),
         'structure_type':     ('build_unit', 'structure_type',         'string'),
