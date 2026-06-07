@@ -70,6 +70,11 @@ class LA_Spatial_Source_Serializer(serializers.ModelSerializer):
         model = LA_Spatial_Source_Model
         fields = '__all__'
 
+    def validate_file_path(self, value):
+        # Tier-2 upload validation. Rules: user/upload_limits.py → "spatial_source".
+        from ..upload_limits import validate_upload
+        return validate_upload(value, "spatial_source")
+
 #------------------------------------------------------------------------------
 class LA_Spatial_Source_Retrive_Serializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
@@ -133,11 +138,21 @@ class Attrib_Image_Serializer(serializers.ModelSerializer):
         model = Attrib_Image_Model
         fields = '__all__'
 
+    def validate_file_path(self, value):
+        # Tier-2 upload validation. Rules: user/upload_limits.py → "image".
+        from ..upload_limits import validate_upload
+        return validate_upload(value, "image")
+
 #_______________________________________________ Messages Serializer _____________________________________________
 class Messages_Serializer(serializers.ModelSerializer):
     class Meta:
         model = Messages_Model
         fields = '__all__'
+
+    def validate_file_path(self, value):
+        # Tier-2 upload validation. Rules: user/upload_limits.py → "message".
+        from ..upload_limits import validate_upload
+        return validate_upload(value, "message")
 
 #_______________________________________________ Inquiries Serializer ____________________________________________
 class Inquiries_Serializer(serializers.ModelSerializer):

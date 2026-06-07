@@ -147,6 +147,15 @@ class Query_Parcels_View(APIView):
         'market_value':     ('assessment', 'market_value',           'decimal'),
         'land_value':       ('assessment', 'land_value',             'decimal'),
         'tax_status':       ('assessment', 'tax_status',             'string'),
+        # Physical-environment attributes (la_ls_physical_env) — enable flood / landslide queries
+        'elevation':        ('physical_env', 'elevation',            'decimal'),
+        'slope':            ('physical_env', 'slope',                'decimal'),
+        'soil_type':        ('physical_env', 'soil_type',            'string'),
+        'flood_zone':       ('physical_env', 'flood_zone',           'string'),
+        # Zoning attributes (la_ls_zoning) — enable zoning-compliance query
+        'zoning':           ('zoning',     'zoning_category',        'string'),
+        'max_far':          ('zoning',     'max_far',                'decimal'),
+        'max_coverage':     ('zoning',     'max_coverage',           'decimal'),
     }
 
     BUILDING_FIELDS = {
@@ -157,10 +166,22 @@ class Query_Parcels_View(APIView):
         'condition':          ('build_unit', 'condition',              'string'),
         'roof_type':          ('build_unit', 'roof_type',              'string'),
         'construction_year':  ('build_unit', 'construction_year',      'int'),
+        'floor_area_ratio':   ('build_unit', 'floor_area_ratio',       'decimal'),
+        'plot_coverage':      ('build_unit', 'plot_coverage',          'decimal'),
         'assessment_value':   ('assessment', 'assessment_annual_value', 'decimal'),
         'market_value':       ('assessment', 'market_value',           'decimal'),
         'land_value':         ('assessment', 'land_value',             'decimal'),
         'tax_status':         ('assessment', 'tax_status',             'string'),
+    }
+
+    # Source key → (Model class, su FK field used for .values_list of the spatial-unit id).
+    # Used by _matching_ids for su-keyed attribute tables.
+    SU_KEYED_SOURCES = {
+        'land_unit':    LA_LS_Land_Unit_Model,
+        'build_unit':   LA_LS_Build_Unit_Model,
+        'assessment':   Assessment_Model,
+        'physical_env': LA_LS_Physical_Env_Model,
+        'zoning':       LA_LS_Zoning_Model,
     }
 
     def _matching_ids(self, base_qs, source, db_field, suffix, value, negated):
@@ -170,26 +191,16 @@ class Query_Parcels_View(APIView):
                 ids = set(base_qs.exclude(**{db_field: value}).values_list('id', flat=True))
             else:
                 ids = set(base_qs.filter(**{f'{db_field}{suffix}': value}).values_list('id', flat=True))
-        elif source == 'land_unit':
+        elif source in self.SU_KEYED_SOURCES:
+            # All other sources are su-keyed attribute tables (1:1 with the spatial unit).
+            # We resolve matching su_ids in the attribute table, then intersect with the
+            # org-scoped base_qs so org isolation is always preserved.
+            model = self.SU_KEYED_SOURCES[source]
             if negated:
-                matched = LA_LS_Land_Unit_Model.objects.filter(**{db_field: value}).values_list('su_id', flat=True)
+                matched = model.objects.filter(**{db_field: value}).values_list('su_id', flat=True)
                 ids = set(base_qs.exclude(su_id_id__in=matched).values_list('id', flat=True))
             else:
-                matched = LA_LS_Land_Unit_Model.objects.filter(**{f'{db_field}{suffix}': value}).values_list('su_id', flat=True)
-                ids = set(base_qs.filter(su_id_id__in=matched).values_list('id', flat=True))
-        elif source == 'build_unit':
-            if negated:
-                matched = LA_LS_Build_Unit_Model.objects.filter(**{db_field: value}).values_list('su_id', flat=True)
-                ids = set(base_qs.exclude(su_id_id__in=matched).values_list('id', flat=True))
-            else:
-                matched = LA_LS_Build_Unit_Model.objects.filter(**{f'{db_field}{suffix}': value}).values_list('su_id', flat=True)
-                ids = set(base_qs.filter(su_id_id__in=matched).values_list('id', flat=True))
-        elif source == 'assessment':
-            if negated:
-                matched = Assessment_Model.objects.filter(**{db_field: value}).values_list('su_id', flat=True)
-                ids = set(base_qs.exclude(su_id_id__in=matched).values_list('id', flat=True))
-            else:
-                matched = Assessment_Model.objects.filter(**{f'{db_field}{suffix}': value}).values_list('su_id', flat=True)
+                matched = model.objects.filter(**{f'{db_field}{suffix}': value}).values_list('su_id', flat=True)
                 ids = set(base_qs.filter(su_id_id__in=matched).values_list('id', flat=True))
         else:
             ids = set()
@@ -280,10 +291,20 @@ class Query_Parcels_View(APIView):
             a.su_id_id: a
             for a in Assessment_Model.objects.filter(su_id_id__in=su_ids)
         }
+        env_map = {}
+        zoning_map = {}
         if is_land:
             attr_map = {
                 lu.su_id_id: lu
                 for lu in LA_LS_Land_Unit_Model.objects.filter(su_id_id__in=su_ids)
+            }
+            env_map = {
+                e.su_id_id: e
+                for e in LA_LS_Physical_Env_Model.objects.filter(su_id_id__in=su_ids)
+            }
+            zoning_map = {
+                z.su_id_id: z
+                for z in LA_LS_Zoning_Model.objects.filter(su_id_id__in=su_ids)
             }
         else:
             attr_map = {
@@ -313,11 +334,20 @@ class Query_Parcels_View(APIView):
                 'tax_status':       ass.tax_status                     if ass else None,
             }
             if is_land:
+                env = env_map.get(su_id)
+                zon = zoning_map.get(su_id)
                 feat.update({
                     'land_name':      a.land_name      if a else None,
                     'access_road':    a.access_road    if a else None,
                     'sl_land_type':   a.sl_land_type   if a else None,
                     'postal_address': a.postal_ad_lnd  if a else None,
+                    'elevation':      float(env.elevation) if env and env.elevation is not None else None,
+                    'slope':          float(env.slope)     if env and env.slope is not None else None,
+                    'soil_type':      env.soil_type        if env else None,
+                    'flood_zone':     env.flood_zone       if env else None,
+                    'zoning':         zon.zoning_category  if zon else None,
+                    'max_far':        float(zon.max_far)      if zon and zon.max_far is not None else None,
+                    'max_coverage':   float(zon.max_coverage) if zon and zon.max_coverage is not None else None,
                 })
             else:
                 feat.update({
@@ -327,6 +357,8 @@ class Query_Parcels_View(APIView):
                     'condition':         a.condition         if a else None,
                     'roof_type':         a.roof_type         if a else None,
                     'construction_year': a.construction_year if a else None,
+                    'floor_area_ratio':  float(a.floor_area_ratio) if a and a.floor_area_ratio is not None else None,
+                    'plot_coverage':     float(a.plot_coverage)    if a and a.plot_coverage is not None else None,
                 })
             features.append(feat)
 

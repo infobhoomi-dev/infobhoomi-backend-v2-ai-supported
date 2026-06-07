@@ -12,4 +12,6 @@ from .land import *
 from .building import *
 from .spatial_units import *
 from .rrr import *
+from .geotag import *
 from .dynamic import *
+from .history import *

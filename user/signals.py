@@ -68,9 +68,6 @@ def archive_parcel_before_delete(sender, instance, **kwargs):
     from .models.history import Parcel_Delete_Archive_Model
     from .models.assessments import Assessment_Model, Tax_Info_Model
 
-    # ── OneToOne attribute sub-tables ──────────────────────────────────────────
-    # The reverse accessor names come from the OneToOneField definitions.
-    # Adjust the accessor names below if your related_name= differs.
     land_unit    = _safe_get_oto('la_ls_land_unit_model',     instance)
     utility_lu   = _safe_get_oto('la_ls_utinet_lu_model',     instance)
     zoning       = _safe_get_oto('la_ls_zoning_model',        instance)
@@ -78,8 +75,6 @@ def archive_parcel_before_delete(sender, instance, **kwargs):
     build_unit   = _safe_get_oto('la_ls_build_unit_model',    instance)
     utility_bu   = _safe_get_oto('la_ls_utinet_bu_model',     instance)
 
-    # ── ForeignKey attribute sub-tables ───────────────────────────────────────
-    # Assessment and Tax can have multiple rows per parcel — take the latest.
     assessment = (
         Assessment_Model.objects
         .filter(su_id=instance.su_id)
@@ -93,11 +88,6 @@ def archive_parcel_before_delete(sender, instance, **kwargs):
         .first()
     )
 
-    # ── Write archive row ──────────────────────────────────────────────────────
-    # deleted_by is not available here automatically — pass it via
-    # instance._deleted_by before calling .delete() in your view:
-    #     parcel._deleted_by = request.user.id
-    #     parcel.delete()
     Parcel_Delete_Archive_Model.objects.create(
         su_id         = instance.su_id,
         label         = getattr(instance, 'label', None),
@@ -115,39 +105,15 @@ def archive_parcel_before_delete(sender, instance, **kwargs):
     )
 
 
-@receiver(post_save, sender='user.LA_Spatial_Unit_Model')
-def create_attribute_placeholders(sender, instance, created, **kwargs):
-    """
-    LADM — auto-create blank attribute records the moment a new spatial unit
-    is saved so all update views always find an existing row.
-
-    Uses transaction.on_commit so the placeholder inserts run AFTER the
-    parent survey_rep transaction commits — this avoids the 16-second delay
-    caused by lock contention when querying survey_rep inside the same
-    open transaction.
-    """
-    if not created:
-        return
-
-    from django.db import transaction
-
-    def _create_placeholders():
-        from .models.spatial_units import (
-            LA_LS_Land_Unit_Model,
-            LA_LS_Zoning_Model,
-            LA_LS_Physical_Env_Model,
-            LA_LS_Utinet_LU_Model,
-        )
-        from .models.assessments import Assessment_Model, Tax_Info_Model
-
-        try:
-            LA_LS_Land_Unit_Model.objects.get_or_create(su_id=instance)
-            LA_LS_Zoning_Model.objects.get_or_create(su_id=instance)
-            LA_LS_Physical_Env_Model.objects.get_or_create(su_id=instance)
-            LA_LS_Utinet_LU_Model.objects.get_or_create(su_id=instance)
-            Assessment_Model.objects.get_or_create(su_id=instance)
-            Tax_Info_Model.objects.get_or_create(su_id=instance)
-        except Exception:
-            pass  # never block a save due to placeholder creation failure
-
-    transaction.on_commit(_create_placeholders)
+# PERF FIX (2026-05-09):
+# The previous post_save signal eagerly created 6 placeholder rows on every
+# new LA_Spatial_Unit insert (Land_Unit, Zoning, Physical_Env, Utinet_LU,
+# Assessment, Tax_Info) -- ~12 round trips per saved feature.
+#
+# This contradicted the comment in user/views/survey.py which says detail
+# records are created lazily on first edit. The detail update views already
+# call get_or_create themselves, so the eager fan-out was redundant and just
+# slowed every save. Removing it cuts ~150-250 ms per saved feature on a
+# remote DB.
+#
+# To restore: copy .perf_fix_backup_<ts>/signals.py back into place.

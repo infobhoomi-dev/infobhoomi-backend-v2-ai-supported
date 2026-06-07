@@ -134,6 +134,34 @@ Tables likely intentionally empty (can skip):
 
 ---
 
+## 3D Cadastre P4b Handoff
+
+Current stage:
+
+- P4 backend City 3D feed/search/import foundation is present in `user/views/geo_utils.py`.
+- P4b has started with persistence fields for Legal Space Building Unit composition.
+
+Latest completed backend slice:
+
+- `user/models/spatial_units.py`: `LA_LS_Build_Unit_Model` now includes `building_unit_type`, `cadastral_id`, and `component_units`.
+- Migration added: `user/migrations/0015_lsbu_composition_fields.py`.
+- Indexes added for `building_unit_type` and `cadastral_id`.
+- `user/views/building.py` now returns these fields in building-unit list/detail responses and accepts them through create/update paths.
+- `user/views/geo_utils.py` IFC import now creates imported room units with `building_unit_type="UNASSIGNED"` and `component_units=[u.cityjson_id]`.
+- `user/views/geo_utils.py` also includes P4b endpoints:
+  - `LSBU_Units_List_View` at `/api/user/bld-3d/units/`
+  - `LSBU_Compose_View` at `/api/user/bld-3d/lsbu/compose/`
+- The compose endpoint promotes the first selected unassigned room-unit into the LSBU, marks the other selected units as `ABSORBED`, unions `component_units`, and merges member `geom_3d` where available.
+- Migration `user.0015_lsbu_composition_fields` was applied successfully in the current backend DB.
+- Verification: `venv\Scripts\python.exe manage.py check` passed.
+
+Remaining backend work:
+
+- Browser/API-test composition against a real imported building.
+- Add reassign/unassign support; current compose endpoint rejects units already assigned/absorbed.
+- Update stored CityJSON membership (`parent_lsbu` on Room objects and children on LSBU objects) after saving composition.
+- Add BAUnit/common-property linkage when private/common ownership workflow is implemented.
+
 ## Active Task Priority Order
 
 1. **Fix serializer coverage** — Add missing fields to serializers in `user/serializers/`

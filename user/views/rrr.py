@@ -67,20 +67,124 @@ def _rrr_perm_for_rrr_id(rrr_id):
     return _rrr_perm_for_ba(rrr['ba_unit_id_id']) if rrr else _RRR_PERM_LAND
 
 
-from ..utils import has_perm as _has_rrr_perm, perm_denied as _rrr_permission_denied  # noqa: E402
+from ..utils import (
+    has_perm as _has_rrr_perm,
+    perm_denied as _rrr_permission_denied,
+    record_history as _record_history,
+)  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Issue #8: RRR Audit Helper
 # ─────────────────────────────────────────────────────────────────────────────
-def _write_rrr_audit(rrr, action, user_id, user_name='', su_id=None):
+def _normal_history_value(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return None if cleaned.lower() in ('', 'none', 'null', 'undefined') else cleaned
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()
+    return str(value)
+
+
+def _snapshot_changes(before, after, prefix=''):
+    changed = []
+    before = before or {}
+    after = after or {}
+    for key in sorted(set(before.keys()) | set(after.keys())):
+        old = before.get(key)
+        new = after.get(key)
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(old, dict) or isinstance(new, dict):
+            changed.extend(_snapshot_changes(old or {}, new or {}, path))
+        elif _normal_history_value(old) != _normal_history_value(new):
+            changed.append(path)
+    return changed
+
+
+def _rrr_document_snapshot(ba_unit):
+    if not ba_unit:
+        return []
+
+    docs = []
+    primary_ids = set()
+    for rrr in LA_RRR_Model.objects.filter(ba_unit_id=ba_unit).select_related('admin_source_id'):
+        admin_source = rrr.admin_source_id
+        if not admin_source or not admin_source.status:
+            continue
+        primary_ids.add(admin_source.admin_source_id)
+        docs.append({
+            'source': 'primary',
+            'rrr_id': rrr.rrr_id,
+            'admin_source_id': admin_source.admin_source_id,
+            'admin_source_type': admin_source.admin_source_type,
+            'file_name': os.path.basename(admin_source.file_path.name) if admin_source.file_path else None,
+            'active': True,
+        })
+
+    for doc_link in LA_RRR_Document_Model.objects.filter(ba_unit=ba_unit).select_related('admin_source'):
+        admin_source = doc_link.admin_source
+        if not admin_source or not admin_source.status:
+            continue
+        if admin_source.admin_source_id in primary_ids:
+            continue
+        docs.append({
+            'source': 'extra',
+            'doc_link_id': doc_link.id,
+            'admin_source_id': admin_source.admin_source_id,
+            'admin_source_type': admin_source.admin_source_type,
+            'file_name': os.path.basename(admin_source.file_path.name) if admin_source.file_path else None,
+            'active': True,
+        })
+    return docs
+
+
+def _build_rrr_snapshot(rrr):
+    parties = [
+        {
+            'pid_id': p['pid_id'],
+            'party_role_type': p['party_role_type'],
+            'share': _normal_history_value(p['share']),
+            'share_type': p['share_type'],
+        }
+        for p in Party_Roles_Model.objects.filter(rrr_id=rrr).values(
+            'pid_id', 'party_role_type', 'share', 'share_type'
+        )
+    ]
+    mortgage_snap = None
+    try:
+        m = rrr.mortgage
+        mortgage_snap = {
+            'amount': _normal_history_value(m.amount),
+            'interest': _normal_history_value(m.interest),
+            'ranking': m.ranking,
+            'mortgage_type': m.mortgage_type,
+            'mortgage_ref_id': m.mortgage_ref_id,
+            'mortgagee': m.mortgagee,
+        }
+    except LA_Mortgage_Model.DoesNotExist:
+        pass
+    return {
+        'rrr_type': rrr.rrr_type,
+        'time_begin': str(rrr.time_begin) if rrr.time_begin else None,
+        'time_end': str(rrr.time_end) if rrr.time_end else None,
+        'description': rrr.description,
+        'status': rrr.status,
+        'parties': parties,
+        'mortgage': mortgage_snap,
+        'documents': _rrr_document_snapshot(rrr.ba_unit_id),
+    }
+
+
+def _write_rrr_audit(rrr, action, user_id, user_name='', su_id=None, before_snapshot=None, changed_fields=None):
     """Write one row to la_rrr_audit capturing the full RRR state at this moment."""
     # Snapshot parties — convert Decimal share to str for JSON serialization
     parties = [
         {
             'pid_id':          p['pid_id'],
             'party_role_type': p['party_role_type'],
-            'share':           str(p['share']) if p['share'] is not None else None,
+            'share':           _normal_history_value(p['share']),
             'share_type':      p['share_type'],
         }
         for p in Party_Roles_Model.objects.filter(rrr_id=rrr).values(
@@ -92,8 +196,8 @@ def _write_rrr_audit(rrr, action, user_id, user_name='', su_id=None):
     try:
         m = rrr.mortgage
         mortgage_snap = {
-            'amount':          str(m.amount) if m.amount is not None else None,
-            'interest':        str(m.interest) if m.interest is not None else None,
+            'amount':          _normal_history_value(m.amount),
+            'interest':        _normal_history_value(m.interest),
             'ranking':         m.ranking,
             'mortgage_type':   m.mortgage_type,
             'mortgage_ref_id': m.mortgage_ref_id,
@@ -109,23 +213,115 @@ def _write_rrr_audit(rrr, action, user_id, user_name='', su_id=None):
         except Exception:
             su_id = None
 
-    LA_RRR_Audit_Model.objects.create(
+    snapshot = {
+        'rrr_type':    rrr.rrr_type,
+        'time_begin':  str(rrr.time_begin) if rrr.time_begin else None,
+        'time_end':    str(rrr.time_end) if rrr.time_end else None,
+        'description': rrr.description,
+        'status':      rrr.status,
+        'parties':     parties,
+        'mortgage':    mortgage_snap,
+        'documents':   _rrr_document_snapshot(rrr.ba_unit_id),
+    }
+    changed_fields = changed_fields if changed_fields is not None else _snapshot_changes(before_snapshot, snapshot)
+
+    # ─── Determine Event Type and Change Summary ───
+    primary_pr = Party_Roles_Model.objects.select_related('pid').filter(rrr_id=rrr).first()
+    holder_name = (primary_pr.pid.party_full_name or primary_pr.pid.party_name) if (primary_pr and primary_pr.pid) else "Unknown"
+
+    if action == LA_RRR_Audit_Model.CREATE:
+        event_type = "rrr_created"
+        change_summary = f"Right holder added: {holder_name} (Right Type: {rrr.rrr_type}, Share: {primary_pr.share if primary_pr else 0}%)"
+    elif action == LA_RRR_Audit_Model.TERMINATE:
+        event_type = "rrr_terminated"
+        change_summary = f"Right terminated: {holder_name} ({rrr.rrr_type})"
+    else: # UPDATE
+        event_type = "rrr_modified"
+        document_field = next(
+            (
+                field for field in changed_fields
+                if str(field).startswith('document added:') or str(field).startswith('document removed:')
+            ),
+            None,
+        )
+        if document_field:
+            document_text = str(document_field)
+            event_type = 'rrr_document_added' if document_text.startswith('document added:') else 'rrr_document_removed'
+            change_summary = document_text[0].upper() + document_text[1:]
+            snapshot['document_event'] = document_text
+        else:
+            changes = []
+            if before_snapshot:
+                if before_snapshot.get('rrr_type') != snapshot.get('rrr_type'):
+                    changes.append(f"Right type changed to {snapshot.get('rrr_type')}")
+                if before_snapshot.get('time_begin') != snapshot.get('time_begin') or before_snapshot.get('time_end') != snapshot.get('time_end'):
+                    from_date = snapshot.get('time_begin') or 'N/A'
+                    to_date = snapshot.get('time_end') or 'lifetime'
+                    changes.append(f"Validity period updated ({from_date} to {to_date})")
+                if before_snapshot.get('description') != snapshot.get('description'):
+                    changes.append("Description updated")
+
+                # Party share compare
+                before_parties = before_snapshot.get('parties') or []
+                after_parties = snapshot.get('parties') or []
+                if before_parties and after_parties:
+                    old_share = before_parties[0].get('share')
+                    new_share = after_parties[0].get('share')
+                    if old_share != new_share:
+                        changes.append(f"Share updated to {new_share}%")
+
+                # Mortgage compare
+                before_mortgage = before_snapshot.get('mortgage') or {}
+                after_mortgage = snapshot.get('mortgage') or {}
+                if before_mortgage != after_mortgage:
+                    changes.append("Mortgage details updated")
+
+            if changes:
+                change_summary = f"RRR updated: {', '.join(changes)}"
+            else:
+                change_summary = f"RRR {rrr.rrr_id} updated"
+
+    # Inject event_type into snapshot
+    snapshot['event_type'] = event_type
+
+    audit = LA_RRR_Audit_Model.objects.create(
         rrr_id=rrr.rrr_id,
         ba_unit_id=rrr.ba_unit_id_id,
         su_id=su_id,
         action=action,
         changed_by=user_id,
         changed_by_name=user_name,
-        snapshot={
-            'rrr_type':    rrr.rrr_type,
-            'time_begin':  str(rrr.time_begin) if rrr.time_begin else None,
-            'time_end':    str(rrr.time_end) if rrr.time_end else None,
-            'description': rrr.description,
-            'status':      rrr.status,
-            'parties':     parties,
-            'mortgage':    mortgage_snap,
-        },
+        snapshot=snapshot,
     )
+    if su_id:
+        _record_history(
+            su_id=su_id,
+            record_type=Parcel_History_Model.RECORD_RRR,
+            action=action.lower(),
+            user=User.objects.filter(id=user_id).first(),
+            category='RRR',
+            field_name='rrr',
+            old_value=before_snapshot,
+            new_value=snapshot,
+            change_summary=change_summary,
+            snapshot={
+                'audit_id': audit.id,
+                'rrr_id': rrr.rrr_id,
+                'ba_unit_id': rrr.ba_unit_id_id,
+                'action': action,
+                'event_type': event_type,
+                'snapshot': snapshot,
+                'before_snapshot': before_snapshot,
+                'changed_fields': changed_fields,
+                'parties': parties,
+                'mortgage': mortgage_snap,
+            },
+            can_restore=(action in {
+                LA_RRR_Audit_Model.CREATE,
+                LA_RRR_Audit_Model.UPDATE,
+                LA_RRR_Audit_Model.TERMINATE,
+            }),
+        )
 
 
 #________________________________________________ RRR Data Save View ____________________________________________________________
@@ -268,6 +464,7 @@ class RRR_Data_Save_View(APIView):
                 "ba_unit_id": ba_unit.ba_unit_id,
                 "admin_source_id": admin_source.admin_source_id,
                 "rrr_id": rrr.rrr_id,
+                "created_rrr_ids": [rrr.rrr_id],
                 "file_saved_as": admin_source.file_path.name if admin_source.file_path else None
             }, status=status.HTTP_201_CREATED)
 
@@ -292,6 +489,8 @@ class RRR_Add_Document_View(APIView):
         except SL_BA_Unit_Model.DoesNotExist:
             return Response({"error": "BA Unit not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        rrr = LA_RRR_Model.objects.filter(ba_unit_id=ba_unit).order_by('rrr_id').first()
+        before_snapshot = _build_rrr_snapshot(rrr) if rrr else None
         file = request.FILES.get('file')
         admin_source_type = request.data.get('admin_source_type', 'Document')
 
@@ -316,6 +515,20 @@ class RRR_Add_Document_View(APIView):
             ba_unit=ba_unit,
             admin_source=admin_source,
         )
+
+        if rrr:
+            user = request.user
+            user_name = f"{user.first_name} {user.last_name}".strip() or user.username
+            doc_name = file.name if file else admin_source_type
+            _write_rrr_audit(
+                rrr,
+                LA_RRR_Audit_Model.UPDATE,
+                user.id,
+                user_name,
+                su_id=ba_unit.su_id_id,
+                before_snapshot=before_snapshot,
+                changed_fields=[f"document added: {doc_name}"],
+            )
 
         file_url = request.build_absolute_uri(
             f"/api/user/admin-source/file/{admin_source.admin_source_id}/"
@@ -346,12 +559,27 @@ class RRR_Remove_Document_View(APIView):
         if not _has_rrr_perm(request.user.id, perm_id, 'edit'):
             return _rrr_permission_denied()
 
+        rrr = LA_RRR_Model.objects.filter(ba_unit_id=doc_link.ba_unit).order_by('rrr_id').first()
+        before_snapshot = _build_rrr_snapshot(rrr) if rrr else None
         admin_source = doc_link.admin_source
-        doc_link.delete()
+        doc_name = None
         if admin_source:
-            if admin_source.file_path:
-                default_storage.delete(admin_source.file_path.name)
-            admin_source.delete()
+            doc_name = os.path.basename(admin_source.file_path.name) if admin_source.file_path else admin_source.admin_source_type
+            admin_source.status = False
+            admin_source.save(update_fields=['status'])
+
+        if rrr:
+            user = request.user
+            user_name = f"{user.first_name} {user.last_name}".strip() or user.username
+            _write_rrr_audit(
+                rrr,
+                LA_RRR_Audit_Model.UPDATE,
+                user.id,
+                user_name,
+                su_id=doc_link.ba_unit.su_id_id,
+                before_snapshot=before_snapshot,
+                changed_fields=[f"document removed: {doc_name or doc_link_id}"],
+            )
 
         return Response({"message": "Document removed successfully"}, status=status.HTTP_200_OK)
 
@@ -392,7 +620,12 @@ class RRR_Data_get_View(APIView):
                 for rrr in rrrs:
                     # Primary doc (from LA_RRR_Model.admin_source_id)
                     admin_source = rrr.admin_source_id
-                    if admin_source and admin_source.admin_source_id not in seen_admin_source_ids:
+                    if (
+                        admin_source
+                        and admin_source.status
+                        and admin_source.file_path
+                        and admin_source.admin_source_id not in seen_admin_source_ids
+                    ):
                         seen_admin_source_ids.add(admin_source.admin_source_id)
                         file_url = request.build_absolute_uri(
                             f"/api/user/admin-source/file/{admin_source.admin_source_id}/"
@@ -448,9 +681,12 @@ class RRR_Data_get_View(APIView):
                     })
 
                 # Additional docs (from LA_RRR_Document_Model linked to this BA unit)
-                for doc_link in LA_RRR_Document_Model.objects.filter(ba_unit=ba_unit).select_related('admin_source'):
+                for doc_link in LA_RRR_Document_Model.objects.filter(
+                    ba_unit=ba_unit,
+                    admin_source__status=True,
+                ).select_related('admin_source'):
                     as2 = doc_link.admin_source
-                    if as2.admin_source_id not in seen_admin_source_ids:
+                    if as2.file_path and as2.admin_source_id not in seen_admin_source_ids:
                         seen_admin_source_ids.add(as2.admin_source_id)
                         file_url2 = request.build_absolute_uri(
                             f"/api/user/admin-source/file/{as2.admin_source_id}/"
@@ -564,6 +800,7 @@ class RRR_Update_View(APIView):
         # --- Update primary RRR record ---
         rrr = LA_RRR_Model.objects.filter(ba_unit_id=ba_unit).first()
         if rrr:
+            before_snapshot = _build_rrr_snapshot(rrr)
             rrr_fields = {}
             if 'time_begin' in data:
                 rrr_fields['time_begin'] = data['time_begin'] or None
@@ -622,6 +859,21 @@ class RRR_Update_View(APIView):
                     )
                     admin_source.file_path = saved_path
                     admin_source.save()
+
+            after_snapshot = _build_rrr_snapshot(rrr)
+            changed_fields = _snapshot_changes(before_snapshot, after_snapshot)
+            if changed_fields:
+                user = request.user
+                user_name = f"{user.first_name} {user.last_name}".strip() or user.username
+                _write_rrr_audit(
+                    rrr,
+                    LA_RRR_Audit_Model.UPDATE,
+                    user.id,
+                    user_name,
+                    su_id=ba_unit.su_id_id,
+                    before_snapshot=before_snapshot,
+                    changed_fields=changed_fields,
+                )
 
         return Response({"message": "RRR entry updated successfully"}, status=status.HTTP_200_OK)
 

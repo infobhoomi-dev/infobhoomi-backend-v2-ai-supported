@@ -148,6 +148,9 @@ class LA_LS_Build_Unit_Model(models.Model):
     apt_name   = models.CharField(max_length=255, null=True)  # unit label e.g. "3B"
     # 3D solid geometry — populated by the 3D Cadastre project for cross-platform viz
     geom_3d    = gismodels.GeometryField(dim=3, srid=4326, null=True)
+    building_unit_type = models.CharField(max_length=50, null=True, blank=True)
+    cadastral_id = models.CharField(max_length=255, null=True, blank=True)
+    component_units = models.JSONField(null=True, blank=True)
 
     ext_builduse_type = models.CharField(max_length=100, null=True)
     ext_builduse_sub_type = models.CharField(max_length=100, null=True)
@@ -164,11 +167,20 @@ class LA_LS_Build_Unit_Model(models.Model):
     structure_type     = models.CharField(max_length=30, null=True)  # CONC_REINF/STEEL_FRM/MASONRY/TIMBER/COMPOSITE
     condition          = models.CharField(max_length=20, null=True)  # EXCELLENT/GOOD/FAIR/POOR/DILAPID
 
+    # Planning-compliance attributes (used by the GIS Query Console FAR/coverage query).
+    # floor_area_ratio = total floor area / parcel area; plot_coverage = footprint / parcel area (%).
+    floor_area_ratio   = models.DecimalField(max_digits=6, decimal_places=2, null=True)
+    plot_coverage      = models.DecimalField(max_digits=5, decimal_places=2, null=True)  # percent
+
     status = models.BooleanField(null=False, default=True)
 
     class Meta:
             managed = True
             db_table = 'la_ls_build_unit'
+            indexes = [
+                models.Index(fields=['building_unit_type'], name='lsbu_type_idx'),
+                models.Index(fields=['cadastral_id'], name='lsbu_cadastral_idx'),
+            ]
 
 #_______________________________________________ LA_LS_Utinet_BU Model __________________________________________________________
 class LA_LS_Utinet_BU_Model(models.Model):

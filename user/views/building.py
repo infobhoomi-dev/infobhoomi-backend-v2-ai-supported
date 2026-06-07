@@ -29,6 +29,7 @@ from ..models import *
 from ..serializers import *
 from ..constant import *
 from ..tests import *
+from ..utils import _history_values_equal, record_history, record_model_changes
 
 User = get_user_model()
 
@@ -325,6 +326,10 @@ class Bld_Admin_Info_Update_View(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def log_changes(self, user_id, category, su_id, original_data, updated_data):
+        record_model_changes(
+            su_id=su_id, category=category, original_data=original_data,
+            updated_data=updated_data, user=User.objects.filter(id=user_id).first(),
+        )
         """Log changes to History_Spartialunit_Attrib_Model."""
         changes = []
         for field, new_value in updated_data.items():
@@ -334,7 +339,7 @@ class Bld_Admin_Info_Update_View(APIView):
                 new_value = "deleted"
             if old_value is None:
                 old_value = "deleted"
-            if old_value != new_value:  # Check if the field value has changed
+            if not _history_values_equal(old_value, new_value):  # Check if the field value has changed
                 changes.append(
                     History_Spartialunit_Attrib_Model(
                         user_id=user_id,
@@ -494,6 +499,10 @@ class Bld_Overview_Update_View(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def log_changes(self, user_id, category, su_id, original_data, updated_data):
+        record_model_changes(
+            su_id=su_id, category=category, original_data=original_data,
+            updated_data=updated_data, user=User.objects.filter(id=user_id).first(),
+        )
         changes = []
         for field, new_value in updated_data.items():
             old_value = original_data.get(field)
@@ -501,7 +510,7 @@ class Bld_Overview_Update_View(APIView):
                 new_value = "deleted"
             if old_value is None:
                 old_value = "deleted"
-            if old_value != new_value:
+            if not _history_values_equal(old_value, new_value):
                 changes.append(
                     History_Spartialunit_Attrib_Model(
                         user_id=user_id,
@@ -636,6 +645,10 @@ class Bld_Utility_Network_Info_Update_View(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def log_changes(self, user_id, category, su_id, original_data, updated_data):
+        record_model_changes(
+            su_id=su_id, category=category, original_data=original_data,
+            updated_data=updated_data, user=User.objects.filter(id=user_id).first(),
+        )
         """Log changes to History_Spartialunit_Attrib_Model."""
         changes = []
         for field, new_value in updated_data.items():
@@ -644,7 +657,7 @@ class Bld_Utility_Network_Info_Update_View(APIView):
                 new_value = "deleted"
             if old_value is None:
                 old_value = "deleted"
-            if old_value != new_value:
+            if not _history_values_equal(old_value, new_value):
                 changes.append(
                     History_Spartialunit_Attrib_Model(
                         user_id=user_id,
@@ -837,6 +850,10 @@ class Tax_Assessment_Update_View(APIView):
             return Response({"error": str(e)}, status=500)
 
     def log_changes(self, user_id, category, su_id, original_data, updated_data):
+        record_model_changes(
+            su_id=su_id, category=category, original_data=original_data,
+            updated_data=updated_data, user=User.objects.filter(id=user_id).first(),
+        )
         changes = []
         for field, new_value in updated_data.items():
             old_value = original_data.get(field)
@@ -844,7 +861,7 @@ class Tax_Assessment_Update_View(APIView):
                 new_value = "deleted"
             if old_value is None:
                 old_value = "deleted"
-            if old_value != new_value:
+            if not _history_values_equal(old_value, new_value):
                 changes.append(History_Spartialunit_Attrib_Model(
                     user_id=user_id,
                     su_id_id=su_id,
@@ -913,6 +930,9 @@ UNIT_ADMIN_FIELD_PERM = {
     "roof_type":           120,
     "hight":               117,   # share area perm for height
     "surface_relation":    114,
+    "building_unit_type":   113,
+    "cadastral_id":         113,
+    "component_units":      113,
 }
 
 UNIT_UTIL_FIELD_PERM = {
@@ -942,6 +962,9 @@ def _unit_to_dict(su_id, survey_row, admin_row, util_row):
         "apt_name":            admin_row.apt_name            if admin_row else None,
         "floor_no":            admin_row.floor_no            if admin_row else None,
         "floor_area":          float(admin_row.floor_area)   if (admin_row and admin_row.floor_area is not None) else None,
+        "building_unit_type":   admin_row.building_unit_type  if admin_row else None,
+        "cadastral_id":         admin_row.cadastral_id        if admin_row else None,
+        "component_units":      admin_row.component_units     if admin_row else None,
         "postal_ad_build":     admin_row.postal_ad_build     if admin_row else None,
         "house_hold_no":       admin_row.house_hold_no       if admin_row else None,
         "bld_property_type":   admin_row.bld_property_type   if admin_row else None,
@@ -1127,6 +1150,13 @@ class Bld_Unit_Update_View(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def _log(self, user_id, category, su_id, original, updated):
+        record_model_changes(
+            su_id=su_id,
+            category=category,
+            original_data=original,
+            updated_data=updated,
+            user=User.objects.filter(id=user_id).first(),
+        )
         changes = []
         for field, new_value in updated.items():
             old_value = original.get(field)
@@ -1134,7 +1164,7 @@ class Bld_Unit_Update_View(APIView):
                 new_value = "deleted"
             if old_value is None:
                 old_value = "deleted"
-            if old_value != new_value:
+            if not _history_values_equal(old_value, new_value):
                 changes.append(History_Spartialunit_Attrib_Model(
                     user_id=user_id,
                     su_id_id=su_id,
@@ -1213,6 +1243,9 @@ class Bld_Unit_Create_View(APIView):
                     "apt_name":          data.get("apt_name"),
                     "floor_no":          data.get("floor_no"),
                     "floor_area":        data.get("floor_area"),
+                    "building_unit_type": data.get("building_unit_type"),
+                    "cadastral_id":      data.get("cadastral_id"),
+                    "component_units":   data.get("component_units"),
                     "postal_ad_build":   data.get("postal_ad_build"),
                     "house_hold_no":     data.get("house_hold_no"),
                     "bld_property_type": data.get("bld_property_type"),
@@ -1239,6 +1272,43 @@ class Bld_Unit_Create_View(APIView):
 
                 admin_row = LA_LS_Build_Unit_Model(**{k: v for k, v in admin_fields.items() if v is not None})
                 admin_row.save()
+
+                record_history(
+                    su_id=new_su_id,
+                    record_type=Parcel_History_Model.RECORD_RELATIONSHIP,
+                    action=Parcel_History_Model.ACTION_CREATE,
+                    user=request.user,
+                    category='RELATIONSHIP',
+                    field_name='parent_id',
+                    old_value=None,
+                    new_value=[parent_su_id],
+                    change_summary=f"Building unit {new_su_id} linked to parent building {parent_su_id}",
+                    snapshot={
+                        'event_type': 'relationship',
+                        'parent_id': [parent_su_id],
+                        'child_id': new_su_id,
+                        'child_layer_id': 12,
+                    },
+                    can_restore=False,
+                )
+                record_history(
+                    su_id=parent_su_id,
+                    record_type=Parcel_History_Model.RECORD_RELATIONSHIP,
+                    action=Parcel_History_Model.ACTION_CREATE,
+                    user=request.user,
+                    category='RELATIONSHIP',
+                    field_name='child_unit_ids',
+                    old_value=None,
+                    new_value=new_su_id,
+                    change_summary=f"Building unit {new_su_id} added under this building",
+                    snapshot={
+                        'event_type': 'relationship',
+                        'parent_id': parent_su_id,
+                        'child_id': new_su_id,
+                        'child_layer_id': 12,
+                    },
+                    can_restore=False,
+                )
 
                 # ── Create la_ls_utinet_bu row if utility provided ────────
                 utility = data.get("utility", {})

@@ -10,3 +10,4 @@ from .history import *
 from .assessments import *
 from .media import *
 from .misc import *
+from .geotag import *

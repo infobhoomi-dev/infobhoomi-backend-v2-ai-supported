@@ -97,3 +97,8 @@ class LA_Spatial_Unit_Sketch_Ref_Serializer(serializers.ModelSerializer):
     class Meta:
         model = LA_Spatial_Unit_Sketch_Ref_Model
         fields = '__all__'
+
+    def validate_file_path(self, value):
+        # Tier-2 upload validation. Rules: user/upload_limits.py → "sketch_ref".
+        from ..upload_limits import validate_upload
+        return validate_upload(value, "sketch_ref")

@@ -215,5 +215,30 @@ class Lst_SL_Group_Party_Type_41_Serializer(serializers.ModelSerializer):
     class Meta:
         model = Lst_SL_Group_Party_Type_41_Model
         fields = '__all__'
+#_______________________________________________ Lst_SU_SL_Vegetation_42 Serializer ______________________________
+class Lst_SU_SL_Vegetation_42_Serializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lst_SU_SL_Vegetation_42_Model
+        fields = '__all__'
+#_______________________________________________ Lst_SU_SL_Electricity_43 Serializer _____________________________
+class Lst_SU_SL_Electricity_43_Serializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lst_SU_SL_Electricity_43_Model
+        fields = '__all__'
+#_______________________________________________ Lst_SU_SL_Drainage_44 Serializer ________________________________
+class Lst_SU_SL_Drainage_44_Serializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lst_SU_SL_Drainage_44_Model
+        fields = '__all__'
+#_______________________________________________ Lst_SU_SL_Gully_45 Serializer ___________________________________
+class Lst_SU_SL_Gully_45_Serializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lst_SU_SL_Gully_45_Model
+        fields = '__all__'
+#_______________________________________________ Lst_SU_SL_Garbage_46 Serializer _________________________________
+class Lst_SU_SL_Garbage_46_Serializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lst_SU_SL_Garbage_46_Model
+        fields = '__all__'
 
 # ====================================================================================================================================

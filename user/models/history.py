@@ -78,7 +78,99 @@ class Parcel_Delete_Archive_Model(models.Model):
     build_unit_data   = models.JSONField(null=True, blank=True)  # LA_LS_Build_Unit_Model
     utility_bu_data   = models.JSONField(null=True, blank=True)  # LA_LS_Utinet_BU_Model
 
+    # Extra legal-space snapshots captured on cascade delete (added 2026-06-06)
+    apt_unit_data     = models.JSONField(null=True, blank=True)  # LA_LS_Apt_Unit_Model
+    ols_polygon_data  = models.JSONField(null=True, blank=True)  # LA_LS_Ols_Polygon_Unit_Model
+    ols_pointline_data= models.JSONField(null=True, blank=True)  # LA_LS_Ols_PointLine_Unit_Model
+    ils_unit_data     = models.JSONField(null=True, blank=True)  # LA_LS_Ils_Unit_Model
+    utility_au_data   = models.JSONField(null=True, blank=True)  # LA_LS_Utinet_AU_Model
+    utility_ols_data  = models.JSONField(null=True, blank=True)  # LA_LS_Utinet_Ols_Model
+
+    # Relationship to the parcel this legal space was deleted with.
+    # null on the parcel's own archive row; set to the parent parcel su_id for
+    # buildings/units/legal spaces removed by the cascade.
+    parent_su_id      = models.IntegerField(null=True, blank=True, db_index=True)
+    space_kind        = models.CharField(max_length=40, null=True, blank=True)  # parcel/building/unit/legal_space
+    layer_id          = models.IntegerField(null=True, blank=True)
+
     class Meta:
         managed  = True
         db_table = 'parcel_delete_archive'
         ordering = ['-deleted_at']
+
+
+class Parcel_History_Model(models.Model):
+    """Unified parcel/building audit log for UI history and safe restore."""
+
+    RECORD_ATTRIBUTE = 'attribute'
+    RECORD_GEOMETRY = 'geometry'
+    RECORD_RRR = 'rrr'
+    RECORD_RELATIONSHIP = 'relationship'
+    RECORD_LEGAL_SPACE = 'legal_space'   # building/unit/legal-space removed or right terminated on parcel delete
+
+    ACTION_CREATE = 'create'
+    ACTION_UPDATE = 'update'
+    ACTION_DELETE = 'delete'
+    ACTION_RESTORE = 'restore'
+    ACTION_TERMINATE = 'terminate'
+
+    id = models.AutoField(primary_key=True)
+    su_id = models.IntegerField(db_index=True)
+    record_type = models.CharField(max_length=30, db_index=True)
+    action = models.CharField(max_length=30, db_index=True)
+    category = models.CharField(max_length=80, null=True, blank=True)
+    field_name = models.CharField(max_length=255, null=True, blank=True)
+    old_value = models.TextField(null=True, blank=True)
+    new_value = models.TextField(null=True, blank=True)
+    change_summary = models.TextField()
+    changed_by = models.IntegerField(null=True, blank=True)
+    changed_by_name = models.CharField(max_length=255, null=True, blank=True)
+    changed_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    snapshot = models.JSONField(null=True, blank=True)
+    can_restore = models.BooleanField(default=False)
+
+    class Meta:
+        managed = True
+        db_table = 'parcel_history'
+        ordering = ['-changed_at', '-id']
+
+
+class Parcel_Event_Model(models.Model):
+    """Legal event stack for parcel history rectification."""
+
+    TYPE_ATTRIBUTE = 'attribute'
+    TYPE_GEOMETRY = 'geometry'
+    TYPE_RRR = 'rrr'
+    TYPE_RELATIONSHIP = 'relationship'
+    TYPE_SPLIT = 'split'
+    TYPE_MERGE = 'merge'
+    TYPE_RECTIFICATION = 'rectification'
+
+    STATUS_ACTIVE = 'active'
+    STATUS_RECTIFIED = 'rectified'
+    STATUS_REAPPLIED = 'reapplied'
+    STATUS_RECORDED = 'recorded'
+    STATUS_BLOCKED = 'blocked'
+
+    id = models.AutoField(primary_key=True)
+    primary_su_id = models.IntegerField(db_index=True)
+    event_type = models.CharField(max_length=40, db_index=True)
+    summary = models.TextField()
+    status = models.CharField(max_length=30, default=STATUS_ACTIVE, db_index=True)
+    affected_parcel_ids = ArrayField(models.IntegerField(), null=True, blank=True)
+    source_history_id = models.IntegerField(null=True, blank=True, db_index=True)
+    source_event_id = models.IntegerField(null=True, blank=True, db_index=True)
+    before_snapshot = models.JSONField(null=True, blank=True)
+    after_snapshot = models.JSONField(null=True, blank=True)
+    rectification_reason = models.TextField(null=True, blank=True)
+    created_by = models.IntegerField(null=True, blank=True)
+    created_by_name = models.CharField(max_length=255, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    rectified_by = models.IntegerField(null=True, blank=True)
+    rectified_at = models.DateTimeField(null=True, blank=True)
+    can_rectify = models.BooleanField(default=True)
+
+    class Meta:
+        managed = True
+        db_table = 'parcel_event'
+        ordering = ['-created_at', '-id']

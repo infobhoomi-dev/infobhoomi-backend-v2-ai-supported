@@ -49,7 +49,7 @@ class Survey_Rep_Map_Serializer(GeoFeatureModelSerializer):
     class Meta:
         model = Survey_Rep_DATA_Model
         geo_field = 'geom'
-        fields = ['id', 'su_id', 'uuid', 'layer_id', 'gnd_id', 'calculated_area', 'parent_id', 'status']
+        fields = ['id', 'su_id', 'uuid', 'layer_id', 'gnd_id', 'calculated_area', 'parent_id', 'ref_id', 'status']
         precision = 6
 
 #------------------------------------------------------------------------------
