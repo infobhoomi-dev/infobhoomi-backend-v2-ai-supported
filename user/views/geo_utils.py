@@ -500,6 +500,7 @@ PERM_3D_CITY_VIEW    = 257   # view (city / admin area)
 PERM_3D_SEARCH       = 258   # view (search)
 PERM_3D_COMPOSE_OPEN = 259   # view (open composition picker)
 PERM_3D_COMPOSE      = 260   # add/edit (create LSBU)
+PERM_3D_REASSIGN     = 263   # edit (reassign / unassign units into an existing LSBU)
 
 
 def _has_3d_perm(user, permission_id, action="view"):
@@ -983,6 +984,148 @@ class LSBU_Compose_View(APIView):
                 "lsbu_su_id": lsbu_row.su_id_id,
                 "building_unit_type": lsbu_type,
                 "cadastral_id": lsbu_row.cadastral_id,
+                "member_room_count": len(room_ids),
+                "absorbed_unit_su_ids": absorbed,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class LSBU_Assign_View(APIView):
+    """POST /api/user/bld-3d/lsbu/assign/
+
+    Attach one or more unassigned room-units (the pool) to an *existing* Legal
+    Space Building Unit (apartment / common space). This is what makes the
+    "create the apartment first, assign 3D units later" workflow possible:
+    the apartment row already exists (created room-less via /bld-unit/create/),
+    and this endpoint folds pool rooms into it.
+
+    Body:
+        building_su_id : int    (required) parent building
+        lsbu_su_id     : int    (required) the target apartment (a VALID_LSBU_TYPE row)
+        unit_su_ids    : [int]  (required) pool units to fold in (>=1)
+
+    Effect (one transaction, reversible — mirrors compose's absorption):
+        * the apartment's component_units = its existing room ids + each member's;
+        * its geom_3d = union of its existing solid and all members' solids;
+        * each member → building_unit_type='ABSORBED' with a
+          {parent_lsbu, rooms} back-pointer stored in component_units;
+        * exclusive membership enforced: a unit already ABSORBED / part of an
+          LSBU is rejected (re-assign it out first).
+    """
+    http_method_names = ['post']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not _has_3d_perm(request.user, PERM_3D_REASSIGN, "edit"):
+            return _perm_denied("assign units to a legal space building unit")
+
+        data = request.data
+        bsu = data.get('building_su_id')
+        lsbu_su_id = data.get('lsbu_su_id')
+        unit_ids = data.get('unit_su_ids')
+
+        try:
+            bsu = int(bsu)
+        except (TypeError, ValueError):
+            return Response({"error": "building_su_id (int) is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            lsbu_su_id = int(lsbu_su_id)
+        except (TypeError, ValueError):
+            return Response({"error": "lsbu_su_id (int) is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if not isinstance(unit_ids, (list, tuple)) or not unit_ids:
+            return Response({"error": "unit_su_ids (non-empty list) is required."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            unit_ids = [int(x) for x in unit_ids]
+        except (TypeError, ValueError):
+            return Response({"error": "unit_su_ids must be integers."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # the apartment must not be in its own member list
+        unit_ids = [u for u in unit_ids if u != lsbu_su_id]
+        if not unit_ids:
+            return Response({"error": "No units to assign (only the apartment itself was given)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # all su_ids (apartment + members) must be children of this building
+        valid_child_ids = set(
+            Survey_Rep_DATA_Model.objects
+            .filter(layer_id=12, parent_id__contains=[bsu])
+            .values_list('id', flat=True)
+        )
+        if lsbu_su_id not in valid_child_ids:
+            return Response({"error": f"Apartment {lsbu_su_id} is not a child of building {bsu}."},
+                            status=status.HTTP_404_NOT_FOUND)
+        bad = [u for u in unit_ids if u not in valid_child_ids]
+        if bad:
+            return Response({"error": f"Units not children of building {bsu}: {bad}"},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        lsbu_row = LA_LS_Build_Unit_Model.objects.filter(su_id_id=lsbu_su_id).first()
+        if not lsbu_row:
+            return Response({"error": f"No build_unit row for apartment {lsbu_su_id}."},
+                            status=status.HTTP_404_NOT_FOUND)
+        if (lsbu_row.building_unit_type or "").upper() not in VALID_LSBU_TYPES:
+            return Response(
+                {"error": "Target is not a legal space building unit. "
+                          "Create the apartment first, then assign units."},
+                status=status.HTTP_400_BAD_REQUEST)
+
+        rows = {r.su_id_id: r for r in LA_LS_Build_Unit_Model.objects.filter(su_id__in=unit_ids)}
+        missing = [u for u in unit_ids if u not in rows]
+        if missing:
+            return Response({"error": f"No build_unit rows for: {missing}"},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        # exclusive membership: members must be UNASSIGNED/empty (not already grouped)
+        already = [
+            u for u, r in rows.items()
+            if (r.building_unit_type or "UNASSIGNED").upper() not in ("UNASSIGNED", "")
+        ]
+        if already:
+            return Response(
+                {"error": f"These units are already part of an LSBU (re-assign first): {already}"},
+                status=status.HTTP_409_CONFLICT)
+
+        try:
+            with transaction.atomic():
+                members = [rows[u] for u in unit_ids]
+
+                # start from the apartment's existing membership + geometry
+                room_ids = list(lsbu_row.component_units or []) if isinstance(
+                    lsbu_row.component_units, list) else []
+                solids = [lsbu_row.geom_3d] if lsbu_row.geom_3d is not None else []
+
+                for m in members:
+                    member_rooms = m.component_units if isinstance(m.component_units, list) else []
+                    room_ids.extend(member_rooms or [])
+                    if m.geom_3d is not None:
+                        solids.append(m.geom_3d)
+
+                merged_geom = _multipolygon_z_union_wkt(solids)
+
+                lsbu_row.component_units = room_ids
+                if merged_geom is not None:
+                    lsbu_row.geom_3d = merged_geom
+                lsbu_row.save(update_fields=["component_units", "geom_3d"])
+
+                absorbed = []
+                for m in members:
+                    cu = m.component_units if isinstance(m.component_units, list) else []
+                    m.building_unit_type = "ABSORBED"
+                    m.component_units = {"parent_lsbu": lsbu_row.su_id_id, "rooms": cu}
+                    m.save(update_fields=["building_unit_type", "component_units"])
+                    absorbed.append(m.su_id_id)
+
+            return Response({
+                "detail": "Units assigned to LSBU.",
+                "lsbu_su_id": lsbu_row.su_id_id,
+                "building_unit_type": lsbu_row.building_unit_type,
                 "member_room_count": len(room_ids),
                 "absorbed_unit_su_ids": absorbed,
             }, status=status.HTTP_200_OK)

@@ -93,6 +93,7 @@ urlpatterns = [
     path('cityjson/search/', City3D_Search_View.as_view(), name='cityjson-search'),  # cadastral search
     path('bld-3d/units/', LSBU_Units_List_View.as_view(), name='lsbu-units'),  # composition picker pool/lsbus
     path('bld-3d/lsbu/compose/', LSBU_Compose_View.as_view(), name='lsbu-compose'),  # group units -> LSBU
+    path('bld-3d/lsbu/assign/', LSBU_Assign_View.as_view(), name='lsbu-assign'),  # fold pool units into existing LSBU
     path('cityjson/<int:pk>/', CityJSON_Model_Retrieve.as_view(), name='cityjson-retrieve'),
     path('cityjson/upload/', CityJSON_Upload.as_view(), name='cityjson-upload'),
 
