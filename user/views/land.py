@@ -29,6 +29,7 @@ from ..models import *
 from ..serializers import *
 from ..constant import *
 from ..tests import *
+from ..utils import _history_values_equal, record_history, record_model_changes
 
 User = get_user_model()
 
@@ -254,9 +255,9 @@ class Lnd_Admin_Info_Update_View(APIView):
 
             # Step 2: editable fields and permission IDs
             # gnd_id is excluded — it is auto-derived from spatial intersection, not user-editable
+            # local_auth is excluded — it is read-only, derived from sl_elect_local_auth lookup (keyed by GND)
             FIELD_PERMISSION_MAP = {
                 "ass_div": 6,
-                "local_auth": 8,
                 "access_road": 9,
                 "sl_land_type": 10,
                 "postal_ad_lnd": 11,
@@ -284,7 +285,7 @@ class Lnd_Admin_Info_Update_View(APIView):
             else:
                 land_unit = None
             if land_unit:
-                lu_fields = ["sl_land_type", "tenure_type", "access_road", "postal_ad_lnd", "land_name", "local_auth"]
+                lu_fields = ["sl_land_type", "tenure_type", "access_road", "postal_ad_lnd", "land_name"]
                 lu_data = {f: filtered_data[f] for f in lu_fields if f in filtered_data}
                 # Fields without dedicated permission IDs — always allowed
                 for rel_field in ["adjacent_parcels", "parent_parcel", "child_parcels", "part_of_estate"]:
@@ -321,8 +322,29 @@ class Lnd_Admin_Info_Update_View(APIView):
             if "parcel_status" in request.data:
                 spatial_unit = LA_Spatial_Unit_Model.objects.filter(su_id=su_id).first()
                 if spatial_unit:
-                    spatial_unit.parcel_status = request.data["parcel_status"] or None
-                    spatial_unit.save(update_fields=["parcel_status"])
+                    old_status = spatial_unit.parcel_status
+                    new_status = request.data["parcel_status"] or None
+                    if not _history_values_equal(old_status, new_status):
+                        spatial_unit.parcel_status = new_status
+                        spatial_unit.save(update_fields=["parcel_status"])
+                        record_history(
+                            su_id=su_id,
+                            record_type=Parcel_History_Model.RECORD_ATTRIBUTE,
+                            action=Parcel_History_Model.ACTION_UPDATE,
+                            user=user,
+                            category=category,
+                            field_name="parcel_status",
+                            old_value=old_status,
+                            new_value=new_status,
+                            change_summary=f"Parcel status changed from {old_status or 'empty'} to {new_status or 'empty'}",
+                            snapshot={
+                                "category": category,
+                                "field_name": "parcel_status",
+                                "old_value": old_status,
+                                "new_value": new_status,
+                            },
+                            can_restore=True,
+                        )
 
             return Response({"detail": "Data updated successfully."}, status=200)
 
@@ -330,6 +352,10 @@ class Lnd_Admin_Info_Update_View(APIView):
             return Response({"error": str(e)}, status=500)
 
     def log_changes(self, user_id, category, su_id, original_data, updated_data):
+        record_model_changes(
+            su_id=su_id, category=category, original_data=original_data,
+            updated_data=updated_data, user=User.objects.filter(id=user_id).first(),
+        )
         changes = []
         for field, new_value in updated_data.items():
             old_value = original_data.get(field)
@@ -337,7 +363,7 @@ class Lnd_Admin_Info_Update_View(APIView):
                 new_value = "deleted"
             if old_value is None:
                 old_value = "deleted"
-            if old_value != new_value:
+            if not _history_values_equal(old_value, new_value):
                 changes.append(History_Spartialunit_Attrib_Model(
                     user_id=user_id,
                     su_id_id=su_id,
@@ -503,6 +529,10 @@ class Lnd_Overview_Update_View(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def log_changes(self, user_id, category, su_id, original_data, updated_data):
+        record_model_changes(
+            su_id=su_id, category=category, original_data=original_data,
+            updated_data=updated_data, user=User.objects.filter(id=user_id).first(),
+        )
         changes = []
         for field, new_value in updated_data.items():
             old_value = original_data.get(field)
@@ -510,7 +540,7 @@ class Lnd_Overview_Update_View(APIView):
                 new_value = "deleted"
             if old_value is None:
                 old_value = "deleted"
-            if old_value != new_value:
+            if not _history_values_equal(old_value, new_value):
                 changes.append(
                     History_Spartialunit_Attrib_Model(
                         user_id=user_id,
@@ -905,10 +935,13 @@ class Lnd_Utility_Network_Info_View(ListCreateAPIView):
             return Response({"detail": "User has no assigned roles."}, status=403)
 
         # Step 2: Field to permission mapping
+        # Note: sanitation_sewer reuses permission_id 22 (the sanitation permission)
+        # since both sanitation fields share the same access level.
         FIELD_PERMISSION_MAP = {
             "electricity": 19,
             "water_supply": 20,
             "drainage_system": 21,
+            "sanitation_sewer": 22,
             "sanitation_gully": 22,
             "garbage_disposal": 23,
         }
@@ -939,6 +972,7 @@ class Lnd_Utility_Network_Info_View(ListCreateAPIView):
             "electricity": "elec",
             "water_supply": "water",
             "drainage_system": "drainage",
+            "sanitation_sewer": "sani_sewer",
             "sanitation_gully": "sani_gully",
             "garbage_disposal": "garbage_dispose"
         }
@@ -975,10 +1009,12 @@ class Lnd_Utility_Network_Info_Update_View(APIView):
             role_id = user_roles.values_list('role_id', flat=True).first()
 
             # Define field mapping and corresponding permission IDs
+            # sanitation_sewer reuses permission_id 22 (same as sanitation_gully)
             FIELD_PERMISSION_MAP = {
                 "water_supply": {"model_field": "water", "permission_id": 20},
                 "electricity": {"model_field": "elec", "permission_id": 19},
                 "drainage_system": {"model_field": "drainage", "permission_id": 21},
+                "sanitation_sewer": {"model_field": "sani_sewer", "permission_id": 22},
                 "sanitation_gully": {"model_field": "sani_gully", "permission_id": 22},
                 "garbage_disposal": {"model_field": "garbage_dispose", "permission_id": 23},
             }
@@ -1022,6 +1058,10 @@ class Lnd_Utility_Network_Info_Update_View(APIView):
             return Response({"error": str(e)}, status=500)
 
     def log_changes(self, user_id, category, su_id, original_data, updated_data):
+        record_model_changes(
+            su_id=su_id, category=category, original_data=original_data,
+            updated_data=updated_data, user=User.objects.filter(id=user_id).first(),
+        )
         changes = []
         for field, new_value in updated_data.items():
             old_value = original_data.get(field)
@@ -1029,7 +1069,7 @@ class Lnd_Utility_Network_Info_Update_View(APIView):
                 new_value = "deleted"
             if old_value is None:
                 old_value = "deleted"
-            if old_value != new_value:
+            if not _history_values_equal(old_value, new_value):
                 changes.append(
                     History_Spartialunit_Attrib_Model(
                         user_id=user_id,

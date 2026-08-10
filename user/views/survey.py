@@ -35,6 +35,7 @@ from ..models import *
 from ..serializers import *
 from ..constant import *
 from ..tests import *
+from ..utils import record_history
 
 User = get_user_model()
 
@@ -69,15 +70,16 @@ class Survey_Rep_DATA_Save_View(APIView):
             return Response({"error": "Expected a list of GEOM DATA"}, status=400)
 
         # --- Hoist per-request queries outside the loop ---
+        # Fetch the role-permission row once and read both flags in Python —
+        # avoids two separate COUNT/EXISTS round trips.
         _t = time.perf_counter()
         permission_id = 201
-        has_add_permission = Role_Permission_Model.objects.filter(
-            role_id=role_id, permission_id=permission_id, add=True
-        ).exists()
-        has_edit_permission = Role_Permission_Model.objects.filter(
-            role_id=role_id, permission_id=permission_id, edit=True
-        ).exists()
-        logger.debug(f"[SAVE⏱] Permission checks: {(time.perf_counter()-_t)*1000:.1f}ms")
+        _perm_row = Role_Permission_Model.objects.filter(
+            role_id=role_id, permission_id=permission_id
+        ).values('add', 'edit').first()
+        has_add_permission  = bool(_perm_row and _perm_row.get('add'))
+        has_edit_permission = bool(_perm_row and _perm_row.get('edit'))
+        logger.debug(f"[SAVE⏱] Permission checks (single fetch): {(time.perf_counter()-_t)*1000:.1f}ms")
 
         _t = time.perf_counter()
         my_layerIDs = set(
@@ -171,6 +173,7 @@ class Survey_Rep_DATA_Save_View(APIView):
                                     dominant_gnd = sl_gnd_10m_Model.objects.filter(geom__contains=centroid).first()
                                     if not dominant_gnd:
                                         # Slow fallback: parcel straddles a GND boundary — find dominant by intersection area
+                                        _t_fallback = time.perf_counter()
                                         dominant_gnd = (
                                             sl_gnd_10m_Model.objects
                                             .filter(geom__intersects=geom_obj)
@@ -178,6 +181,7 @@ class Survey_Rep_DATA_Save_View(APIView):
                                             .order_by('-inter_area')
                                             .first()
                                         )
+                                        logger.debug(f"[SAVE⏱]     Slow GND fallback hit: {(time.perf_counter()-_t_fallback)*1000:.1f}ms")
                             except Exception:
                                 # sl_gnd_10m has no geom column — skip GND validation
                                 dominant_gnd = None
@@ -223,24 +227,62 @@ class Survey_Rep_DATA_Save_View(APIView):
                                     item["properties"]["gnd_id"] = containing_gnd.gid
                     logger.debug(f"[SAVE⏱]   GND detection: {(time.perf_counter()-_t)*1000:.1f}ms (gnd_id provided: {bool(gndID)})")
 
-                    # Extract parent_id
+                    # Extract parent_id / parent_uuid and resolve to a single set of
+                    # parent IDs. Then run ONE UPDATE to deactivate them.
+                    # (Previously this block ran two separate UPDATEs — first for
+                    # parent_id from the payload, then again for parent_id derived
+                    # from parent_uuid — duplicating the round trip when the frontend
+                    # sent both keys.)
                     _t = time.perf_counter()
-                    parent_ids = item.get("properties", {}).get("parent_id", []) # [11287]
-                    if isinstance(parent_ids, list) and parent_ids:
-                        Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids).update(status=False)
+                    raw_parent_ids = item.get("properties", {}).get("parent_id", []) or []
+                    if not isinstance(raw_parent_ids, list):
+                        raw_parent_ids = []
 
-                    # Extract parent_uuid and convert it to parent_id
-                    parent_uuids = item.get("properties", {}).get("parent_uuid", [])
-                    parent_ids = []
-
+                    parent_uuids = item.get("properties", {}).get("parent_uuid", []) or []
+                    parent_ids_from_uuid = []
                     if isinstance(parent_uuids, list) and parent_uuids:
-                        parent_ids = list(Survey_Rep_DATA_Model.objects.filter(uuid__in=parent_uuids).values_list('id', flat=True))
-                        item["properties"]["parent_id"] = parent_ids  # Assign retrieved IDs to parent_id
+                        parent_ids_from_uuid = list(
+                            Survey_Rep_DATA_Model.objects
+                            .filter(uuid__in=parent_uuids)
+                            .values_list('id', flat=True)
+                        )
+                        # Stamp the resolved IDs back so the serializer / DB row gets them
+                        item["properties"]["parent_id"] = parent_ids_from_uuid or raw_parent_ids
 
-                    # Update status for parent_ids if they exist
+                    parent_ids = list({*raw_parent_ids, *parent_ids_from_uuid})  # dedup
+                    layer_id_for_relation = item.get("properties", {}).get("layer_id")
+                    try:
+                        layer_id_for_relation = int(layer_id_for_relation)
+                    except (TypeError, ValueError):
+                        layer_id_for_relation = None
+
+                    # Buildings are related to the land parcel they sit on via ref_id.
+                    # If the frontend did not send it, infer it from the containing parcel
+                    # so parent/child history is still legally traceable.
+                    current_ref_id = item.get("properties", {}).get("ref_id")
+                    if layer_id_for_relation == 3 and not current_ref_id and geom_type in ["polygon", "multipolygon"]:
+                        containing_parcel = (
+                            Survey_Rep_DATA_Model.objects
+                            .filter(layer_id__in=[1, 6], status=True, geom__contains=_geom_obj_4326.centroid)
+                            .order_by('calculated_area')
+                            .first()
+                        )
+                        if not containing_parcel:
+                            containing_parcel = (
+                                Survey_Rep_DATA_Model.objects
+                                .filter(layer_id__in=[1, 6], status=True, geom__intersects=_geom_obj_4326)
+                                .order_by('calculated_area')
+                                .first()
+                            )
+                        if containing_parcel:
+                            item["properties"]["ref_id"] = containing_parcel.id
+                            logger.debug(
+                                f"[SAVE] Inferred building parent parcel ref_id={containing_parcel.id}"
+                            )
+
                     if parent_ids:
                         Survey_Rep_DATA_Model.objects.filter(id__in=parent_ids).update(status=False)
-                    logger.debug(f"[SAVE⏱]   Parent ID lookup + status update: {(time.perf_counter()-_t)*1000:.1f}ms")
+                    logger.debug(f"[SAVE⏱]   Parent ID lookup + status update (single UPDATE, {len(parent_ids)} ids): {(time.perf_counter()-_t)*1000:.1f}ms")
 
                     # Inject the already-parsed GEOSGeometry so GeometryField.to_internal_value
                     # hits its isinstance(value, GEOSGeometry) short-circuit and skips re-parsing.
@@ -259,8 +301,10 @@ class Survey_Rep_DATA_Save_View(APIView):
                         survey_rep.su_id_id = survey_rep.id  # sync Python object only
                         logger.debug(f"[SAVE⏱]   INSERT survey_rep (su_id set by trigger): {(time.perf_counter()-_t)*1000:.1f}ms")
 
-                        # Batch all related object creation into bulk_create lists
-                        geom_history_objs = [Survey_Rep_Geom_History_Model(
+                        # Single-row history insert. (Was wrapped in a list and passed to
+                        # bulk_create for no benefit — bulk_create([x]) ≡ x.create() but slower
+                        # because it skips signal/auto_now handling and adds list overhead.)
+                        Survey_Rep_Geom_History_Model.objects.create(
                             su_id=survey_rep.id,
                             user_id=survey_rep.user_id,
                             layer_id=survey_rep.layer_id,
@@ -269,8 +313,93 @@ class Survey_Rep_DATA_Save_View(APIView):
                             geom=survey_rep.geom,
                             status=survey_rep.status,
                             ref_id=survey_rep.ref_id,
-                        )]
-                        Survey_Rep_Geom_History_Model.objects.bulk_create(geom_history_objs)
+                        )
+                        record_history(
+                            su_id=survey_rep.id,
+                            record_type=Parcel_History_Model.RECORD_GEOMETRY,
+                            action=Parcel_History_Model.ACTION_CREATE,
+                            user=user,
+                            category='GEOMETRY',
+                            field_name='geom',
+                            old_value=None,
+                            new_value=survey_rep.geom,
+                            change_summary=f"Geometry created for feature {survey_rep.id}",
+                            snapshot={
+                                'survey_rep_id': survey_rep.id,
+                                'layer_id': survey_rep.layer_id,
+                                'gnd_id': survey_rep.gnd_id,
+                            },
+                            can_restore=False,
+                        )
+                        if parent_ids or survey_rep.ref_id:
+                            relation_label = (
+                                'Building linked to land parcel'
+                                if survey_rep.layer_id == 3 and survey_rep.ref_id
+                                else 'Relationship set'
+                            )
+                            record_history(
+                                su_id=survey_rep.id,
+                                record_type=Parcel_History_Model.RECORD_RELATIONSHIP,
+                                action=Parcel_History_Model.ACTION_CREATE,
+                                user=user,
+                                category='RELATIONSHIP',
+                                field_name='parent_id/ref_id',
+                                old_value=None,
+                                new_value=f"parent_id={parent_ids or None}, ref_id={survey_rep.ref_id}",
+                                change_summary=f"{relation_label}: parent_id={parent_ids or None}, ref_id={survey_rep.ref_id or 'none'}",
+                                snapshot={
+                                    'event_type': 'relationship',
+                                    'parent_id': parent_ids or None,
+                                    'ref_id': survey_rep.ref_id,
+                                    'child_id': survey_rep.id,
+                                    'child_layer_id': survey_rep.layer_id,
+                                },
+                                can_restore=False,
+                            )
+                            if survey_rep.ref_id:
+                                parent_summary = (
+                                    f"Building {survey_rep.id} added on this land parcel"
+                                    if survey_rep.layer_id == 3
+                                    else f"Related child feature {survey_rep.id} linked to this parcel/building"
+                                )
+                                record_history(
+                                    su_id=survey_rep.ref_id,
+                                    record_type=Parcel_History_Model.RECORD_RELATIONSHIP,
+                                    action=Parcel_History_Model.ACTION_CREATE,
+                                    user=user,
+                                    category='RELATIONSHIP',
+                                    field_name='child_ref_id',
+                                    old_value=None,
+                                    new_value=survey_rep.id,
+                                    change_summary=parent_summary,
+                                    snapshot={
+                                        'event_type': 'relationship',
+                                        'parent_ref_id': survey_rep.ref_id,
+                                        'child_id': survey_rep.id,
+                                        'child_layer_id': survey_rep.layer_id,
+                                    },
+                                    can_restore=False,
+                                )
+                            for parent_id in parent_ids:
+                                record_history(
+                                    su_id=parent_id,
+                                    record_type=Parcel_History_Model.RECORD_RELATIONSHIP,
+                                    action=Parcel_History_Model.ACTION_CREATE,
+                                    user=user,
+                                    category='SPLIT',
+                                    field_name='child_ids',
+                                    old_value=None,
+                                    new_value=survey_rep.id,
+                                    change_summary=f"Parcel split: child parcel {survey_rep.id} created from parent {parent_id}",
+                                    snapshot={
+                                        'event_type': 'split',
+                                        'parent_id': parent_id,
+                                        'child_id': survey_rep.id,
+                                        'child_uuid': str(survey_rep.uuid),
+                                        'child_geom': survey_rep.geom.wkt if survey_rep.geom else None,
+                                    },
+                                    can_restore=False,
+                                )
                         logger.debug(f"[SAVE⏱]   Geom history INSERT: {(time.perf_counter()-_t)*1000:.1f}ms")
 
                         _t = time.perf_counter()
@@ -282,9 +411,15 @@ class Survey_Rep_DATA_Save_View(APIView):
                         LA_Spatial_Unit_Model.objects.create(su_id=survey_rep.id)
                         logger.debug(f"[SAVE⏱]   Spatial unit INSERT: {(time.perf_counter()-_t)*1000:.1f}ms")
 
-                        # Persist su_id FK to DB — fallback for envs without the
-                        # trg_survey_rep_su_id trigger (e.g. local dev / restored DBs).
-                        Survey_Rep_DATA_Model.objects.filter(id=survey_rep.id).update(su_id_id=survey_rep.id)
+                        # Persist su_id FK to DB — only run as a fallback when the
+                        # trg_survey_rep_su_id BEFORE-INSERT trigger isn't installed
+                        # (e.g. fresh local dev / restored DBs without the trigger).
+                        # Setting INFOBHOOMI_HAS_SU_ID_TRIGGER=true in env skips this
+                        # extra UPDATE round trip on production where the trigger exists.
+                        from django.conf import settings as _s
+                        if not getattr(_s, "INFOBHOOMI_HAS_SU_ID_TRIGGER", False) and \
+                           not os.environ.get("INFOBHOOMI_HAS_SU_ID_TRIGGER", "").lower() in ("1", "true", "yes"):
+                            Survey_Rep_DATA_Model.objects.filter(id=survey_rep.id).update(su_id_id=survey_rep.id)
                         logger.debug(f"[SAVE⏱] ── Feature [{index}] total: {(time.perf_counter()-_t_feat)*1000:.1f}ms")
 
                         # Return only the fields the frontend needs to update feature IDs/metadata.
@@ -301,6 +436,7 @@ class Survey_Rep_DATA_Save_View(APIView):
                                 "layer_id": survey_rep.layer_id,
                                 "status": survey_rep.status,
                                 "parent_id": survey_rep.parent_id,
+                                "ref_id": survey_rep.ref_id,
                             },
                         })
 
@@ -455,6 +591,13 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
             
             fields_to_save = ['date_modified']
             instance.date_modified = now()
+            spatial_update_requested = any(
+                field in serializer.validated_data
+                for field in (
+                    'geom', 'geom_type', 'layer_id', 'calculated_area',
+                    'reference_coordinate', 'status',
+                )
+            )
 
             # Get a list of actual database columns to prevent frontend garbage (like isUpdateOnly) from crashing the save
             valid_model_fields = [f.name for f in instance._meta.get_fields()]
@@ -483,7 +626,7 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
 
             # Step 6: Recalculate area/length from updated geometry
             _t = time.perf_counter()
-            if instance.geom:
+            if spatial_update_requested and instance.geom:
                 _crs = instance.reference_coordinate or "EPSG:4326"
                 try:
                     _srid = int(_crs.split(":")[-1])
@@ -502,7 +645,7 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
 
             # Step 7: GND detection after geometry update
             _t = time.perf_counter()
-            if instance.geom_type in ["polygon", "multipolygon"] and instance.geom:
+            if spatial_update_requested and instance.geom_type in ["polygon", "multipolygon"] and instance.geom:
                 layer_id_val = instance.layer_id
                 is_land_parcel = layer_id_val in [1, 6]
                 try:
@@ -546,7 +689,7 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                     if is_land_parcel:
                         raise
 
-            elif instance.geom_type in ["point", "multipoint", "linestring", "multilinestring"] and instance.geom:
+            elif spatial_update_requested and instance.geom_type in ["point", "multipoint", "linestring", "multilinestring"] and instance.geom:
                 try:
                     with transaction.atomic():
                         lookup_point = instance.geom.centroid
@@ -589,7 +732,18 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
             }
 
             history_written = False
-            if old_data != new_data:
+            geometry_old_data = {
+                key: old_data.get(key)
+                for key in (
+                    "user_id", "layer_id", "calculated_area",
+                    "reference_coordinate", "geom", "status",
+                )
+            }
+            geometry_new_data = {
+                key: new_data.get(key)
+                for key in geometry_old_data.keys()
+            }
+            if geometry_old_data != geometry_new_data:
                 # The database might already contain legacy string booleans (like "true") 
                 # in fields like 'status'. We must sanitize them before passing to the History table.
                 history_payload = {
@@ -611,6 +765,41 @@ class Survey_Rep_DATA_Update_View(RetrieveUpdateDestroyAPIView):
                         elif v_clean == 'false': history_payload[k] = False
 
                 Survey_Rep_Geom_History_Model.objects.create(**history_payload)
+                record_history(
+                    su_id=instance.id,
+                    record_type=Parcel_History_Model.RECORD_GEOMETRY,
+                    action=Parcel_History_Model.ACTION_UPDATE,
+                    user=request.user,
+                    category='GEOMETRY',
+                    field_name='geom',
+                    old_value=old_data.get('geom'),
+                    new_value=instance.geom,
+                    change_summary=f"Geometry updated for feature {instance.id}",
+                    snapshot={
+                        'layer_id': instance.layer_id,
+                        'calculated_area': str(instance.calculated_area) if instance.calculated_area is not None else None,
+                        'reference_coordinate': instance.reference_coordinate,
+                        'gnd_id': instance.gnd_id,
+                        'ref_id': instance.ref_id,
+                    },
+                    can_restore=True,
+                )
+                history_written = True
+
+            if old_data.get('ref_id') != new_data.get('ref_id'):
+                record_history(
+                    su_id=instance.id,
+                    record_type=Parcel_History_Model.RECORD_RELATIONSHIP,
+                    action=Parcel_History_Model.ACTION_UPDATE,
+                    user=request.user,
+                    category='RELATIONSHIP',
+                    field_name='ref_id',
+                    old_value=old_data.get('ref_id'),
+                    new_value=instance.ref_id,
+                    change_summary=f"Reference parcel changed from {old_data.get('ref_id') or 'none'} to {instance.ref_id or 'none'}",
+                    snapshot={'old_ref_id': old_data.get('ref_id'), 'new_ref_id': instance.ref_id},
+                    can_restore=False,
+                )
                 history_written = True
                 
             logger.debug(f"[UPDATE⏱] Step 9 — history write (written={history_written}): {(time.perf_counter()-_t)*1000:.1f}ms")
@@ -663,14 +852,69 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
                 result[field.name] = value
         return result
 
-    def _archive_and_soft_delete_su(self, su_int_id, user_id, logger):
+    @staticmethod
+    def _by_su(model, su_int_id):
+        """Fetch a legal-space sub-table row keyed on the su_id FK (to_field=su_id)."""
+        try:
+            return model.objects.filter(su_id_id=su_int_id).first()
+        except Exception:
+            return None
+
+    def _terminate_rights(self, su_int_id, user_id, logger):
         """
-        Soft-delete a single LA_Spatial_Unit_Model row identified by its su_id integer.
+        Void every administrative right on a spatial unit when its parcel is deleted.
+
+        Per QA decision (2026-06-06): deleting a parcel makes all legal rights to its
+        buildings/units null and void.  We soft-terminate (status=False) each
+        SL_BA_Unit and its LA_RRR rows and record a 'legal_space'/'terminate' history
+        row per voided right.  No SQL DELETE — PROTECT constraints stay satisfied.
+        Returns a list of human-readable termination summaries.
+        """
+        from ..models.rrr import SL_BA_Unit_Model, LA_RRR_Model
+
+        summaries = []
+        ba_units = list(SL_BA_Unit_Model.objects.filter(su_id=su_int_id, status=True))
+        ba_ids = [b.ba_unit_id for b in ba_units]
+        rrr_rows = list(LA_RRR_Model.objects.filter(ba_unit_id__in=ba_ids, status=True)) if ba_ids else []
+        actor = User.objects.filter(id=user_id).first()
+
+        for rrr in rrr_rows:
+            summary = f"Right {rrr.rrr_type or 'RRR'} #{rrr.rrr_id} terminated (parcel deleted)"
+            summaries.append(summary)
+            record_history(
+                su_id=su_int_id,
+                record_type=Parcel_History_Model.RECORD_LEGAL_SPACE,
+                action=Parcel_History_Model.ACTION_TERMINATE,
+                user=actor,
+                category='RRR',
+                field_name='rrr',
+                old_value='active',
+                new_value='terminated',
+                change_summary=summary,
+                snapshot={'rrr_id': rrr.rrr_id, 'rrr_type': rrr.rrr_type, 'ba_unit_id': rrr.ba_unit_id_id},
+                can_restore=False,
+            )
+        if rrr_rows:
+            LA_RRR_Model.objects.filter(ba_unit_id__in=ba_ids, status=True).update(status=False)
+        if ba_units:
+            SL_BA_Unit_Model.objects.filter(su_id=su_int_id, status=True).update(status=False)
+            logger.debug(f"[DELETE⏱]     terminated {len(ba_units)} BA unit(s), {len(rrr_rows)} right(s) on su_id={su_int_id}")
+        return summaries
+
+    def _archive_and_soft_delete_su(self, su_int_id, user_id, logger,
+                                    *, space_kind='parcel', parent_su_id=None,
+                                    layer_id=None):
+        """
+        Soft-delete a single LA_Spatial_Unit_Model row identified by its su_id integer,
+        archiving every legal-space sub-table and terminating its rights.
 
         Steps:
-          1. Snapshot all attribute sub-tables → Parcel_Delete_Archive_Model
-          2. Soft-delete SL_BA_Unit_Model rows  (status=False)
-          3. Soft-delete LA_Spatial_Unit_Model   (status=False)
+          1. Snapshot all legal-space sub-tables → Parcel_Delete_Archive_Model
+             (incl. apt / OLS / ILS / utility legal spaces) with relationship metadata.
+          2. Terminate administrative rights (SL_BA_Unit + LA_RRR) and log them.
+          3. For non-parcel legal spaces, write a 'legal_space'/'terminate' history row
+             attributed to the parent parcel so the deletion is visible in its report.
+          4. Soft-delete SL_BA_Unit_Model + LA_Spatial_Unit_Model (status=False).
 
         Physical deletion is intentionally avoided: SL_BA_Unit_Model.su_id uses
         on_delete=PROTECT, so deleting the spatial unit while a BA unit exists
@@ -687,7 +931,7 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
             logger.debug(f"[DELETE⏱]     LA_Spatial_Unit su_id={su_int_id} not found — skipped")
             return
 
-        # 1. Snapshot attribute sub-tables
+        # 1. Snapshot attribute sub-tables (reverse OneToOne accessors)
         def _oto(name):
             try:
                 return getattr(su_instance, name)
@@ -703,11 +947,25 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
         assessment   = Assessment_Model.objects.filter(su_id=su_int_id).order_by('-id').first()
         tax_info     = Tax_Info_Model.objects.filter(su_id=su_int_id).order_by('-id').first()
 
+        # Extra legal-space sub-tables (3D / OLS / ILS / utility)
+        ols_polygon  = self._by_su(LA_LS_Ols_Polygon_Unit_Model, su_int_id)
+        ols_pointline= self._by_su(LA_LS_Ols_PointLine_Unit_Model, su_int_id)
+        ils_unit     = self._by_su(LA_LS_Ils_Unit_Model, su_int_id)
+        utility_ols  = self._by_su(LA_LS_Utinet_Ols_Model, su_int_id)
+        apt_unit     = None
+        utility_au   = None
+        if ils_unit is not None:
+            apt_unit   = LA_LS_Apt_Unit_Model.objects.filter(ref_id=ils_unit.id).first()
+            utility_au = LA_LS_Utinet_AU_Model.objects.filter(ref_id=ils_unit.id).first()
+
         Parcel_Delete_Archive_Model.objects.create(
             su_id         = su_int_id,
             label         = su_instance.label,
             parcel_status = su_instance.parcel_status,
             deleted_by    = user_id,
+            parent_su_id  = parent_su_id,
+            space_kind    = space_kind,
+            layer_id      = layer_id,
             land_unit_data    = self._snapshot(land_unit),
             assessment_data   = self._snapshot(assessment),
             tax_info_data     = self._snapshot(tax_info),
@@ -716,13 +974,39 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
             physical_env_data = self._snapshot(physical_env),
             build_unit_data   = self._snapshot(build_unit),
             utility_bu_data   = self._snapshot(utility_bu),
+            apt_unit_data     = self._snapshot(apt_unit),
+            ols_polygon_data  = self._snapshot(ols_polygon),
+            ols_pointline_data= self._snapshot(ols_pointline),
+            ils_unit_data     = self._snapshot(ils_unit),
+            utility_au_data   = self._snapshot(utility_au),
+            utility_ols_data  = self._snapshot(utility_ols),
         )
-        logger.debug(f"[DELETE⏱]     archived su_id={su_int_id} → parcel_delete_archive")
+        logger.debug(f"[DELETE⏱]     archived su_id={su_int_id} ({space_kind}) → parcel_delete_archive")
 
-        # 2. Soft-delete administrative unit (avoids PROTECT on re-deletion attempts)
+        # 2. Terminate administrative rights and log them
+        self._terminate_rights(su_int_id, user_id, logger)
+
+        # 3. Legal-space deletion history row, attributed to the parent parcel
+        if space_kind != 'parcel':
+            label_txt = build_unit.building_name if (space_kind == 'building' and build_unit) else None
+            label_txt = label_txt or su_instance.label or f"su_id {su_int_id}"
+            record_history(
+                su_id=parent_su_id or su_int_id,
+                record_type=Parcel_History_Model.RECORD_LEGAL_SPACE,
+                action=Parcel_History_Model.ACTION_TERMINATE,
+                user=User.objects.filter(id=user_id).first(),
+                category=space_kind.upper(),
+                field_name='legal_space',
+                old_value='active',
+                new_value='deleted',
+                change_summary=f"{space_kind.capitalize()} '{label_txt}' (su_id {su_int_id}) deleted with parcel {parent_su_id}",
+                snapshot={'su_id': su_int_id, 'space_kind': space_kind,
+                          'layer_id': layer_id, 'parent_su_id': parent_su_id, 'label': label_txt},
+                can_restore=False,
+            )
+
+        # 4. Soft-delete the spatial unit itself (BA units already flipped in step 2)
         SL_BA_Unit_Model.objects.filter(su_id=su_int_id).update(status=False)
-
-        # 3. Soft-delete the spatial unit itself
         su_instance.status = False
         su_instance.save(update_fields=['status'])
 
@@ -745,6 +1029,44 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
             tool     = 'delete',
             user_id  = user_id,
         )
+
+    def _collect_legal_space_descendants(self, primary, primary_su_int, logger):
+        """
+        Gather every legal space that must be removed with a parcel, leaf-first.
+
+        Hierarchy (see PARCEL_DELETE_LEGALSPACE_HISTORY_DESIGN.md §2):
+          parcel (layer 1/6)
+            └─ building (layer 3, survey_rep.ref_id = parcel.survey_rep.id)
+                 └─ strata/apartment unit (layer 12, parent_id contains building su_id)
+            └─ other legal spaces linked by ref_id (OLS/ILS/utility)
+
+        Returns an ordered list of dicts: {row, su_id, space_kind, parent_su_id,
+        layer_id}.  Units come before their buildings so geometry snapshots stay
+        coherent (leaf-first deletion).
+        """
+        descendants = []
+        ref_children = list(Survey_Rep_DATA_Model.objects.filter(ref_id=primary.id, status=True))
+        for child in ref_children:
+            child_su = child.su_id_id
+            kind = 'building' if child.layer_id == 3 else 'legal_space'
+
+            # Units inside a building (collected first → leaf-first order)
+            if kind == 'building' and child_su:
+                units = Survey_Rep_DATA_Model.objects.filter(
+                    parent_id__contains=[child_su], layer_id=12, status=True,
+                )
+                for unit in units:
+                    descendants.append({
+                        'row': unit, 'su_id': unit.su_id_id, 'space_kind': 'unit',
+                        'parent_su_id': child_su, 'layer_id': unit.layer_id,
+                    })
+            descendants.append({
+                'row': child, 'su_id': child_su, 'space_kind': kind,
+                'parent_su_id': primary_su_int, 'layer_id': child.layer_id,
+            })
+
+        logger.debug(f"[DELETE⏱]   collected {len(descendants)} legal-space descendant(s) for su_id={primary_su_int}")
+        return descendants
 
     # ── Main soft-delete logic ─────────────────────────────────────────────────
 
@@ -781,12 +1103,18 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
             # ── 2. Geometry + function history for primary record ─────────────
             self._archive_geom_history(primary, primary_su_int or survey_rep_id, user_id)
 
-            # ── 3. Handle child / sibling records (ref_id links) ─────────────
-            ref_survey_qs = Survey_Rep_DATA_Model.objects.filter(ref_id=survey_rep_id)
-            for ref_rec in ref_survey_qs:
-                ref_su_int = ref_rec.su_id_id
+            # ── 3. Cascade to all legal-space descendants (buildings, their
+            #       units, and other ref-linked legal spaces) — leaf-first ──────
+            for d in self._collect_legal_space_descendants(primary, primary_su_int, logger):
+                ref_rec = d['row']
+                ref_su_int = d['su_id']
                 if ref_su_int:
-                    self._archive_and_soft_delete_su(ref_su_int, user_id, logger)
+                    self._archive_and_soft_delete_su(
+                        ref_su_int, user_id, logger,
+                        space_kind=d['space_kind'],
+                        parent_su_id=d['parent_su_id'],
+                        layer_id=d['layer_id'],
+                    )
                 self._archive_geom_history(ref_rec, ref_su_int or ref_rec.id, user_id)
                 ref_rec.status = False
                 ref_rec.save(update_fields=['status'])
@@ -795,6 +1123,19 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
             # ── 4. Soft-delete the primary survey_rep record ──────────────────
             primary.status = False
             primary.save(update_fields=['status'])
+            record_history(
+                su_id=primary_su_int or survey_rep_id,
+                record_type=Parcel_History_Model.RECORD_GEOMETRY,
+                action=Parcel_History_Model.ACTION_DELETE,
+                user=User.objects.filter(id=user_id).first(),
+                category='GEOMETRY',
+                field_name='geom',
+                old_value=primary.geom,
+                new_value=None,
+                change_summary=f"Geometry deleted for feature {survey_rep_id}",
+                snapshot={'survey_rep_id': survey_rep_id, 'parent_id': parent_ids},
+                can_restore=False,
+            )
             total_affected += 1
 
         except Survey_Rep_DATA_Model.DoesNotExist:

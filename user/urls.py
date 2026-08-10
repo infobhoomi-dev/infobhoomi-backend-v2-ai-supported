@@ -71,6 +71,11 @@ urlpatterns = [
     path('lst-int-providers-39/', Lst_Int_Providers_39_View.as_view()), #__ Lst_Internet_Providers_39 __
     path('lst-org-name-40/', Lst_Org_Names_40_View.as_view()), #__ Lst_Organization_Names_40 __
     path('lst-sl-group_party_type-41/', Lst_SL_Group_Party_Type_41_View.as_view()), #__ Lst_SL_Group_Party_Type_41 __
+    path('lst-su-sl-vegetation-42/', Lst_SU_SL_Vegetation_42_View.as_view()), #__ Lst_SU_SL_Vegetation_42 __
+    path('lst-su-sl-electricity-43/', Lst_SU_SL_Electricity_43_View.as_view()), #__ Lst_SU_SL_Electricity_43 __
+    path('lst-su-sl-drainage-44/', Lst_SU_SL_Drainage_44_View.as_view()), #__ Lst_SU_SL_Drainage_44 __
+    path('lst-su-sl-gully-45/', Lst_SU_SL_Gully_45_View.as_view()), #__ Lst_SU_SL_Gully_45 __
+    path('lst-su-sl-garbage-46/', Lst_SU_SL_Garbage_46_View.as_view()), #__ Lst_SU_SL_Garbage_46 __
     path('lst-gnd-area/', Lst_gnd_10m_View.as_view()), #__ Lst_gnd_for Admin Info __
 
 #__________________________________________________________________________________________________________________________________________
@@ -82,15 +87,18 @@ urlpatterns = [
     path('temp_import/', Temp_Import_View.as_view()),
 
 #__ CityJson __
-    path('cityjson/', CityJSON_Model_ListCreate.as_view(), name='cityjson-list-create'),
+    path('cityjson/', CityJSON_Model_ListCreate.as_view(), name='cityjson-list-create'),  # ?su_id= filter
+    path('cityjson/import/', IFC_Cadastre_Import_View.as_view(), name='cityjson-import'),  # IFC/CityJSON 3D import
+    path('cityjson/admin-area/', City3D_AdminArea_View.as_view(), name='cityjson-admin-area'),  # city-3D feed
+    path('cityjson/search/', City3D_Search_View.as_view(), name='cityjson-search'),  # cadastral search
+    path('bld-3d/units/', LSBU_Units_List_View.as_view(), name='lsbu-units'),  # composition picker pool/lsbus
+    path('bld-3d/lsbu/compose/', LSBU_Compose_View.as_view(), name='lsbu-compose'),  # group units -> LSBU
+    path('bld-3d/lsbu/assign/', LSBU_Assign_View.as_view(), name='lsbu-assign'),  # fold pool units into existing LSBU
     path('cityjson/<int:pk>/', CityJSON_Model_Retrieve.as_view(), name='cityjson-retrieve'),
     path('cityjson/upload/', CityJSON_Upload.as_view(), name='cityjson-upload'),
 
     path('cityobjects/', City_Object_List.as_view(), name='cityobject-list'),
     path('cityobjects/<str:pk>/', City_Object_Retrieve.as_view(), name='cityobject-retrieve'),
-
-
-    # path('ifc_to_cityjson/', IFCtoCityJSONView.as_view(), name='ifc_to_cityjson'),
 
 
 #__________________________________________________________________________________________________________________________________________
@@ -330,6 +338,14 @@ urlpatterns = [
     path('rrr/update/<int:ba_unit_id>/', RRR_Update_View.as_view()),  # PATCH existing RRR entry
     path('rrr/terminate/<int:rrr_id>/', RRR_Terminate_View.as_view()),  # Issue #8: soft-delete a right
     path('rrr-history/', RRR_Audit_History_View.as_view()),              # Issue #8: GET ?su_id=n
+    path('parcel-history/su_id=<int:su_id>/', Parcel_History_View.as_view()),
+    path('deleted-parcels/', Deleted_Parcel_Search_View.as_view()),  # search soft-deleted parcels for history lookup
+    path('parcel-history/restore/id=<int:history_id>/', Parcel_History_Restore_View.as_view()),
+    path('parcel-history/restore-geometry/id=<int:history_id>/', Parcel_Geometry_Restore_View.as_view()),
+    path('parcel-history/restore-rrr/id=<int:history_id>/', Parcel_RRR_Restore_View.as_view()),
+    path('parcel-history/undo-rectification/event=<int:event_id>/', Parcel_Event_Undo_Rectification_View.as_view()),
+    path('geotags/', GeoTag_View.as_view()),
+    path('geotags/<int:tag_id>/', GeoTag_Detail_View.as_view()),
 
     path('admin-source/file/<int:admin_source_id>/', DownloadAdminSourcePDF.as_view(), name='download_admin_pdf'),
     path('admin-source/update/<int:admin_source_id>/', AdminSourceUpdateView.as_view()),

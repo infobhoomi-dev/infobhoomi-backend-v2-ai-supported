@@ -1,7 +1,7 @@
 import requests, json, io
 
 BASE = 'http://127.0.0.1:8000/api/user'
-TOKEN = '9afe80dceedb56cfa6e459a116bb2e0dab16fc13'
+TOKEN = '28972832e8793f9cda25323f3d86ca154c623268'
 H  = {'Authorization': f'Token {TOKEN}'}
 HJ = {'Authorization': f'Token {TOKEN}', 'Content-Type': 'application/json'}
 
@@ -19,7 +19,7 @@ def chk(label, ok, exp, got):
 print('=== SAVE ===')
 
 # 1. Restriction on Owner RRR
-r = requests.post(f'{BASE}/rrr-restrictions/rrr_id={RRR_ID_OWNER}/', headers=HJ, json={
+r = requests.post(f'{BASE}/rrr-restrictions/ba_unit_id={BA_UNIT_ID}/', headers=HJ, json={
     'rrr_restriction_type': 'RES_EAS',
     'description': 'Right-of-way easement for access road',
     'time_begin': '2020-01-15',
@@ -28,7 +28,7 @@ r = requests.post(f'{BASE}/rrr-restrictions/rrr_id={RRR_ID_OWNER}/', headers=HJ,
 print(f'  Restriction [{r.status_code}]: {r.text[:150]}')
 
 # 2. Responsibility on Owner RRR
-r = requests.post(f'{BASE}/rrr-responsibilities/rrr_id={RRR_ID_OWNER}/', headers=HJ, json={
+r = requests.post(f'{BASE}/rrr-responsibilities/ba_unit_id={BA_UNIT_ID}/', headers=HJ, json={
     'rrr_responsibility_type': 'RSP_MAINT',
     'description': 'Maintenance of boundary fence',
     'time_begin': '2020-01-15',
@@ -54,12 +54,13 @@ data = r.json()
 print(json.dumps(data, indent=2))
 
 records = data.get('records', [])
-if records:
-    rrrs = records[0]['rrrs']
+ba_rec = next((x for x in records if x['ba_unit_id'] == BA_UNIT_ID), None)
+if ba_rec:
+    rrrs = ba_rec.get('rrrs', [])
     owner_rrr = next((x for x in rrrs if x['rrr_id'] == RRR_ID_OWNER), None)
     if owner_rrr:
-        restr = owner_rrr.get('restrictions', [])
-        respo = owner_rrr.get('responsibilities', [])
+        restr = ba_rec.get('restrictions', [])
+        respo = ba_rec.get('responsibilities', [])
         chk('restriction saved', len(restr) > 0, '>0', len(restr))
         if restr:
             chk('restriction type=RES_EAS', restr[0]['rrr_restriction_type'] == 'RES_EAS', 'RES_EAS', restr[0]['rrr_restriction_type'])
@@ -71,12 +72,14 @@ if records:
     else:
         print('  FAIL  owner_rrr not found in response')
 
-    docs = records[0]['admin_sources']
+    docs = ba_rec.get('admin_sources', [])
     chk('extra doc saved (>=2 docs)', len(docs) >= 2, '>=2', len(docs))
     survey_doc = next((d for d in docs if d['admin_source_type'] == 'Survey Plan'), None)
     chk('survey plan doc exists', survey_doc is not None, True, survey_doc is not None)
     if survey_doc:
         chk('survey plan file_url set', survey_doc['file_url'] is not None, 'not None', survey_doc['file_url'])
+else:
+    print(f'  FAIL  ba_unit {BA_UNIT_ID} not found in response')
 
 print(f'\n{"="*50}')
 print(f'FINAL: {len(PASS)} OK  |  {len(FAIL)} FAILED')

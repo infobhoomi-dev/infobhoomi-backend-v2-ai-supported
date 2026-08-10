@@ -39,6 +39,11 @@ class City_Object_Model(models.Model):
 class CityJSON_Model(models.Model):
     id = models.AutoField(primary_key=True)
     cityjson_data = models.JSONField()
+    # Building this CityJSON belongs to (survey_rep.id / la_spatial_unit.su_id of
+    # the layer_id=3 building). Lets the viewer fetch a building by parcel.
+    su_id = models.IntegerField(null=True, blank=True, db_index=True)
+    name = models.CharField(max_length=255, null=True, blank=True)
+    source_file = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -46,7 +51,7 @@ class CityJSON_Model(models.Model):
         db_table = 'city_json'
 
     def __str__(self):
-        return f"CityJSONModel {self.id}"
+        return f"CityJSONModel {self.id} (su_id={self.su_id})"
 
 
 

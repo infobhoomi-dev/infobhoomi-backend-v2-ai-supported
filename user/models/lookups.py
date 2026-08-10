@@ -362,4 +362,49 @@ class Lst_SL_Group_Party_Type_41_Model(models.Model):
         managed = True
         db_table = 'lst_sl_group_party_type_41'
 
+#_______________________________________________ Lst_SU_SL_Vegetation_42 Model ___________________________________________________
+class Lst_SU_SL_Vegetation_42_Model(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=255, null=False)
+
+    class Meta:
+        managed = True
+        db_table = 'lst_su_sl_vegetation_42'
+
+#_______________________________________________ Lst_SU_SL_Electricity_43 Model __________________________________________________
+class Lst_SU_SL_Electricity_43_Model(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=255, null=False)
+
+    class Meta:
+        managed = True
+        db_table = 'lst_su_sl_electricity_43'
+
+#_______________________________________________ Lst_SU_SL_Drainage_44 Model _____________________________________________________
+class Lst_SU_SL_Drainage_44_Model(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=255, null=False)
+
+    class Meta:
+        managed = True
+        db_table = 'lst_su_sl_drainage_44'
+
+#_______________________________________________ Lst_SU_SL_Gully_45 Model ________________________________________________________
+class Lst_SU_SL_Gully_45_Model(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=255, null=False)
+
+    class Meta:
+        managed = True
+        db_table = 'lst_su_sl_gully_45'
+
+#_______________________________________________ Lst_SU_SL_Garbage_46 Model ______________________________________________________
+class Lst_SU_SL_Garbage_46_Model(models.Model):
+    id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=255, null=False)
+
+    class Meta:
+        managed = True
+        db_table = 'lst_su_sl_garbage_46'
+
 # ====================================================================================================================================

@@ -24,9 +24,11 @@ if dotenv_file.exists():
     dotenv.load_dotenv(dotenv_file)
 
 if os.name == 'nt':
-    VENV_BASE = os.environ['VIRTUAL_ENV']
+    VENV_BASE = os.environ.get('VIRTUAL_ENV', str(BASE_DIR / 'venv'))
     os.environ['PATH'] = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo') + ';' + os.environ['PATH']
     os.environ['PROJ_LIB'] = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo\\data\\proj')# + ';' + os.environ['PATH']
+    GDAL_LIBRARY_PATH = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo\\gdal.dll')
+    GEOS_LIBRARY_PATH = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo\\geos_c.dll')
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
@@ -75,6 +77,28 @@ MIDDLEWARE = [
 ]
 
 AUTH_USER_MODEL = 'user.User'
+
+# =============================================================================
+# Upload size limits (Tier 1 — server-wide hard caps).
+#
+# Per-category business rules (smaller, type-specific) are enforced in
+# user/constants/upload_limits.py via validate_upload() at the serializer layer.
+# Frontend pre-checks mirror those rules for UX. Production reverse proxies
+# (nginx client_max_body_size etc.) should be set in the same neighbourhood.
+#
+# DATA_UPLOAD_MAX_MEMORY_SIZE — hard cap on total request body size. Set to
+# 150 MB because shapefile imports parse a .zip in the browser to GeoJSON and
+# POST that JSON; a city-scale parcel layer can run ~30–80 MB of GeoJSON.
+#
+# FILE_UPLOAD_MAX_MEMORY_SIZE — files larger than this stream to disk instead
+# of buffering in RAM. 5 MB keeps memory usage predictable for typical uploads.
+#
+# DATA_UPLOAD_MAX_NUMBER_FIELDS — guards against form-field DOS.
+# =============================================================================
+DATA_UPLOAD_MAX_MEMORY_SIZE = 150 * 1024 * 1024   # 150 MB request body cap
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024     # 5 MB before spilling to disk
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 5000
+
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -194,6 +218,8 @@ SECURE_HSTS_SECONDS = 31536000 if _SECURE else 0  # 1 year
 SECURE_HSTS_INCLUDE_SUBDOMAINS = _SECURE
 SECURE_HSTS_PRELOAD = _SECURE
 SECURE_CONTENT_TYPE_NOSNIFF = True  # safe to enable everywhere
+# infobhoomi/settings.py
+INFOBHOOMI_HAS_SU_ID_TRIGGER = True
 
 SECURE_MEDIA_URL = '/secure-media/'  # Ensure it's properly mapped
 SECURE_MEDIA_ROOT = os.path.join(BASE_DIR, 'secure-media')  # Define storage path

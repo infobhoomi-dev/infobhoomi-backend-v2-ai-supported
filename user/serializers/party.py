@@ -75,6 +75,11 @@ class LA_Admin_Source_Serializer(serializers.ModelSerializer):
             'status', 'date_created',
         ]
 
+    def validate_file_path(self, value):
+        # Tier-2 upload validation. Rules: user/upload_limits.py → "admin_source".
+        from ..upload_limits import validate_upload
+        return validate_upload(value, "admin_source")
+
 #------------------------------------------------------------------------------ (pdf)
 class User_Admin_Source_Activity_Serializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()

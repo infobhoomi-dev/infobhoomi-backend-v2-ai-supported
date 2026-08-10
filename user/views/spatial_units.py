@@ -29,6 +29,7 @@ from ..models import *
 from ..serializers import *
 from ..constant import *
 from ..tests import *
+from ..utils import record_history
 
 User = get_user_model()
 
@@ -349,6 +350,26 @@ class LA_Spatial_Source_View(ListCreateAPIView):
             instance.file_path.name = os.path.join('documents/spatial_source', new_file_name)
             # Save the instance again to update the file path in the database
             instance.save(update_fields=['file_path'])
+
+        record_history(
+            su_id=instance.su_id_id,
+            record_type=Parcel_History_Model.RECORD_ATTRIBUTE,
+            action=Parcel_History_Model.ACTION_CREATE,
+            user=self.request.user,
+            category='DOCUMENT',
+            field_name='spatial_source',
+            old_value=None,
+            new_value=instance.source_id,
+            change_summary=f"Spatial source document added: {instance.source_id}",
+            snapshot={
+                'spatial_source_id': instance.id,
+                'spatial_source_type': instance.spatial_source_type,
+                'source_id': instance.source_id,
+                'description': instance.description,
+                'file_path': str(instance.file_path) if instance.file_path else None,
+            },
+            can_restore=False,
+        )
 
 #------------------------------------------------------------------------------
 class LA_Spatial_Source_Retrive_View(ListCreateAPIView):

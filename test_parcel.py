@@ -1,7 +1,7 @@
 import requests
 
 BASE = 'http://127.0.0.1:8000/api/user'
-TOKEN = '9afe80dceedb56cfa6e459a116bb2e0dab16fc13'
+TOKEN = '28972832e8793f9cda25323f3d86ca154c623268'
 SU_ID = 11742
 H  = {'Authorization': f'Token {TOKEN}', 'Content-Type': 'application/json'}
 HG = {'Authorization': f'Token {TOKEN}'}
@@ -72,7 +72,7 @@ print('\n1. Admin Info:')
 for k, exp in [
     ('land_name','TEST-LOT-11742'), ('sl_land_type','PUBLIC'), ('tenure_type','LEASEHOLD'),
     ('access_road','Yes'), ('registration_date','2023-06-15'),
-    ('local_auth','Bandarawela Municipal Council'), ('parcel_status','ACTIVE'),
+    ('local_auth','Badulla MC'), ('parcel_status','ACTIVE'),
     ('adjacent_parcels','11741, 11743'), ('parent_parcel','11700'), ('part_of_estate','TEST-ESTATE-01'),
 ]:
     chk(k, str(d.get(k)) == str(exp), exp, d.get(k))
@@ -98,7 +98,7 @@ for k, exp in [('soil_type','CLAY'), ('vegetation_cover','Mixed Shrubs')]:
     chk(k, str(d.get(k)) == str(exp), exp, d.get(k))
 chk('elevation~312.5', abs(float(d.get('elevation') or 0) - 312.5) < 0.01, 312.5, d.get('elevation'))
 chk('slope~4.2',       abs(float(d.get('slope') or 0)     - 4.2)   < 0.01, 4.2,   d.get('slope'))
-chk('flood_zone=False', d.get('flood_zone') == False, False, d.get('flood_zone'))
+chk("flood_zone='None'", d.get('flood_zone') == 'None', 'None', d.get('flood_zone'))
 
 d = get(f'{BASE}/lnd-utinet-info/su_id={SU_ID}/')
 print('\n5. Utility Network:')

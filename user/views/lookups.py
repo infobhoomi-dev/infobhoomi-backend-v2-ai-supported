@@ -9,11 +9,21 @@ from ..serializers import *
 # Instead of 41 separate classes, we generate them with a single factory.
 
 def _lookup_view(model, serializer, methods=None):
-    """Return a ListCreateAPIView subclass bound to *model* and *serializer*."""
+    """Return a ListCreateAPIView subclass bound to *model* and *serializer*.
+
+    Pagination is disabled (pagination_class = None) so lookup endpoints return
+    a bare JSON array, e.g. ``[{"id": 1, "name": "Pipe"}, ...]``.
+
+    The project-level DEFAULT_PAGINATION_CLASS (PageNumberPagination, PAGE_SIZE
+    50) was wrapping responses as ``{count, next, previous, results: [...]}``,
+    which broke every frontend dropdown — they all expect a bare array.
+    Lookup tables are small reference data and should never be paginated.
+    """
     class View(ListCreateAPIView):
         http_method_names = methods or ['get']
         queryset = model.objects.all().order_by('id')
         serializer_class = serializer
+        pagination_class = None
     return View
 
 
@@ -60,3 +70,8 @@ Lst_Tele_Providers_38_View                  = _lookup_view(Lst_Tele_Providers_38
 Lst_Int_Providers_39_View                   = _lookup_view(Lst_Int_Providers_39_Model,                   Lst_Int_Providers_39_Serializer)
 Lst_Org_Names_40_View                       = _lookup_view(Lst_Org_Names_40_Model,                       Lst_Org_Names_40_Serializer,       methods=['get', 'post'])
 Lst_SL_Group_Party_Type_41_View             = _lookup_view(Lst_SL_Group_Party_Type_41_Model,             Lst_SL_Group_Party_Type_41_Serializer)
+Lst_SU_SL_Vegetation_42_View                = _lookup_view(Lst_SU_SL_Vegetation_42_Model,                Lst_SU_SL_Vegetation_42_Serializer)
+Lst_SU_SL_Electricity_43_View               = _lookup_view(Lst_SU_SL_Electricity_43_Model,               Lst_SU_SL_Electricity_43_Serializer)
+Lst_SU_SL_Drainage_44_View                  = _lookup_view(Lst_SU_SL_Drainage_44_Model,                  Lst_SU_SL_Drainage_44_Serializer)
+Lst_SU_SL_Gully_45_View                     = _lookup_view(Lst_SU_SL_Gully_45_Model,                     Lst_SU_SL_Gully_45_Serializer)
+Lst_SU_SL_Garbage_46_View                   = _lookup_view(Lst_SU_SL_Garbage_46_Model,                   Lst_SU_SL_Garbage_46_Serializer)
