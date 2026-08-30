@@ -1,0 +1,8 @@
+# Optional: IFC -> CityJSON conversion (user/services/ifc/).
+#
+# Installed separately because ifcopenshell wheel availability lags new Python
+# releases. If `pip install -r requirements-ifc.txt` fails, the rest of the
+# backend still runs — only the IFC import endpoints are unavailable.
+#
+# Requires Python 3.11–3.13 on macOS arm64.
+ifcopenshell==0.8.5

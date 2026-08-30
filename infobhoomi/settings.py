@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 import os
+import sys
+from glob import glob
 from os import path
 from pathlib import Path
 import dotenv
@@ -23,12 +25,101 @@ dotenv_file = BASE_DIR / '.env'
 if dotenv_file.exists():
     dotenv.load_dotenv(dotenv_file)
 
+# =============================================================================
+# GDAL / GEOS discovery for django.contrib.gis
+#
+# Django's GIS backend loads the GDAL and GEOS *C libraries* by name. Where
+# those live is platform specific, so each platform gets its own branch.
+# Any branch can be overridden by exporting GDAL_LIBRARY_PATH /
+# GEOS_LIBRARY_PATH (or setting them in .env) before Django starts.
+# =============================================================================
+
+def _resolve_lib(env_key, candidates):
+    """Return the first existing path: env override, then literal paths, then globs."""
+    override = os.environ.get(env_key)
+    if override and os.path.exists(override):
+        return override
+    for candidate in candidates:
+        if any(ch in candidate for ch in '*?'):
+            matches = sorted(glob(candidate))
+            if matches:
+                return matches[-1]
+        elif os.path.exists(candidate):
+            return candidate
+    return None
+
+
 if os.name == 'nt':
+    # Windows: GDAL/GEOS ship inside the venv via the OSGeo GDAL wheel.
     VENV_BASE = os.environ.get('VIRTUAL_ENV', str(BASE_DIR / 'venv'))
     os.environ['PATH'] = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo') + ';' + os.environ['PATH']
-    os.environ['PROJ_LIB'] = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo\\data\\proj')# + ';' + os.environ['PATH']
+    os.environ['PROJ_LIB'] = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo\\data\\proj')
     GDAL_LIBRARY_PATH = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo\\gdal.dll')
     GEOS_LIBRARY_PATH = os.path.join(VENV_BASE, 'Lib\\site-packages\\osgeo\\geos_c.dll')
+
+elif sys.platform == 'darwin':
+    # macOS: GDAL/GEOS come from Homebrew -> `brew install gdal geos proj`.
+    # Apple Silicon installs under /opt/homebrew, Intel under /usr/local.
+    _BREW_PREFIXES = [
+        os.environ.get('HOMEBREW_PREFIX', ''),
+        '/opt/homebrew',
+        '/usr/local',
+    ]
+    _BREW_PREFIXES = [p for p in _BREW_PREFIXES if p]
+
+    _gdal = _resolve_lib('GDAL_LIBRARY_PATH', [
+        f'{prefix}/{sub}'
+        for prefix in _BREW_PREFIXES
+        for sub in ('lib/libgdal.dylib', 'lib/libgdal.*.dylib', 'opt/gdal/lib/libgdal.dylib')
+    ])
+    _geos = _resolve_lib('GEOS_LIBRARY_PATH', [
+        f'{prefix}/{sub}'
+        for prefix in _BREW_PREFIXES
+        for sub in ('lib/libgeos_c.dylib', 'lib/libgeos_c.*.dylib', 'opt/geos/lib/libgeos_c.dylib')
+    ])
+
+    if _gdal:
+        GDAL_LIBRARY_PATH = _gdal
+    if _geos:
+        GEOS_LIBRARY_PATH = _geos
+
+    if 'PROJ_LIB' not in os.environ:
+        for prefix in _BREW_PREFIXES:
+            for sub in ('share/proj', 'opt/proj/share/proj'):
+                _proj = os.path.join(prefix, sub)
+                if os.path.isdir(_proj):
+                    os.environ['PROJ_LIB'] = _proj
+                    break
+            if 'PROJ_LIB' in os.environ:
+                break
+
+    if not (_gdal and _geos):
+        sys.stderr.write(
+            "\n[infobhoomi] WARNING: GDAL/GEOS libraries were not found under "
+            + ', '.join(_BREW_PREFIXES)
+            + ".\n              Run: brew install gdal geos proj postgis\n"
+              "              Or set GDAL_LIBRARY_PATH / GEOS_LIBRARY_PATH in .env\n\n"
+        )
+
+else:
+    # Linux: rely on the system loader (libgdal.so / libgeos_c.so on the
+    # default search path), but still honour explicit overrides.
+    _gdal = _resolve_lib('GDAL_LIBRARY_PATH', [
+        '/usr/lib/x86_64-linux-gnu/libgdal.so',
+        '/usr/lib/aarch64-linux-gnu/libgdal.so',
+        '/usr/lib/libgdal.so',
+        '/usr/lib/*/libgdal.so.*',
+    ])
+    _geos = _resolve_lib('GEOS_LIBRARY_PATH', [
+        '/usr/lib/x86_64-linux-gnu/libgeos_c.so',
+        '/usr/lib/aarch64-linux-gnu/libgeos_c.so',
+        '/usr/lib/libgeos_c.so',
+        '/usr/lib/*/libgeos_c.so.*',
+    ])
+    if _gdal:
+        GDAL_LIBRARY_PATH = _gdal
+    if _geos:
+        GEOS_LIBRARY_PATH = _geos
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
@@ -218,8 +309,12 @@ SECURE_HSTS_SECONDS = 31536000 if _SECURE else 0  # 1 year
 SECURE_HSTS_INCLUDE_SUBDOMAINS = _SECURE
 SECURE_HSTS_PRELOAD = _SECURE
 SECURE_CONTENT_TYPE_NOSNIFF = True  # safe to enable everywhere
-# infobhoomi/settings.py
-INFOBHOOMI_HAS_SU_ID_TRIGGER = True
+# Set True only where the trg_survey_rep_su_id BEFORE-INSERT trigger is
+# installed on survey_rep — it lets the save view skip a redundant fallback
+# UPDATE. Local/restored dev databases don't have that trigger, so this must
+# default to False there; hardcoding True here left survey_rep.su_id NULL on
+# every save on fresh/restored DBs (see user/views/survey.py save view).
+INFOBHOOMI_HAS_SU_ID_TRIGGER = config('INFOBHOOMI_HAS_SU_ID_TRIGGER', cast=bool, default=False)
 
 SECURE_MEDIA_URL = '/secure-media/'  # Ensure it's properly mapped
 SECURE_MEDIA_ROOT = os.path.join(BASE_DIR, 'secure-media')  # Define storage path

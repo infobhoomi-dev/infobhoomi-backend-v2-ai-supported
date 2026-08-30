@@ -322,6 +322,14 @@ urlpatterns = [
 #__ Tags __
     path('tags/', Tags_View.as_view()),
 
+#__ User Activity Log (Tier 5 chips: Report generation / Export / Print / __
+#__ Log in-Log out / Feature change-Delete) — see spatial_units.py __
+    path('report_generation/', Report_Generation_Activity_View.as_view()),
+    path('export/', Export_Activity_View.as_view()),
+    path('print/', Print_Activity_View.as_view()),
+    path('login_logout/', Login_Logout_Activity_View.as_view()),
+    path('feature_change_delete/', Feature_Change_Delete_Activity_View.as_view()),
+
 #__ Dynamic Attributes (Land Tab custom fields) __
     path('dynamic-attribute/', Dynamic_Attribute_View.as_view()),                   # GET (list) + POST (create)
     path('dynamic-attribute/<int:pk>/', Dynamic_Attribute_Delete_View.as_view()),   # DELETE
@@ -353,19 +361,23 @@ urlpatterns = [
 
 
 #__ SL Rights Activity __
-    # path('sl-rights-activity/<int:userID>/', SL_Rights_Activity_View.as_view()),
+    # Activity Log "Rights" chip. Superseded the old userID-in-URL design (view
+    # class never existed) — scopes to the caller via the auth token instead.
+    path('sl-rights-activity/', RRR_Rights_Activity_View.as_view()),
 
 #__ LA Mortgage Activity __
-    # path('la-mortgage-activity/<int:userID>/', LA_Mortgage_Activity_View.as_view()),
+    path('la-mortgage-activity/', RRR_Mortgage_Activity_View.as_view()),
 
 #__ LA Responsibility Activity __
-    # path('la-responsibility-activity/<int:userID>/', LA_Responsibility_Activity_View.as_view()),
+    path('la-responsibility-activity/', RRR_Responsibility_Activity_View.as_view()),
 
 #__ Admin Annotation Activity __
     # path('admin-annotation-activity/<int:userID>/', Admin_Annotation_Activity_View.as_view()),
 
 #__ SL Admin Restrict Activity __
-    # path('sl-admin-restrict-activity/<int:userID>/', SL_Admin_Restrict_Activity_View.as_view()),
+    # Activity Log "Admin_Restriction" chip — RESTRICTION is a first-class
+    # rrr_type alongside RIGHT/RESPONSIBILITY, same pattern as those two.
+    path('sl-admin-restrict-activity/', RRR_Admin_Restriction_Activity_View.as_view()),
 
 #__ SL Rights & Liabilities Activity __
     # path('sl-rights-lib-activity/<int:userID>/', SL_Rights_Liabilities_Activity_View.as_view()),

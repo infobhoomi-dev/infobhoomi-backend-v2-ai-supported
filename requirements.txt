@@ -1,13 +1,39 @@
-asgiref==3.8.1
+# InfoBhoomi backend — Python dependencies
+#
+# Cross-platform (macOS / Linux / Windows). Pins mirror the package set that
+# the project was last known to run against.
+#
+# macOS note: the GDAL/GEOS *C libraries* are NOT installed from pip here —
+# they come from Homebrew (`brew install gdal geos proj`) and are located by
+# infobhoomi/settings.py at startup. No `gdal` pip wheel is needed because no
+# application code imports `osgeo` directly; only django.contrib.gis does, and
+# it loads the shared library by path.
+
+# --- Django core ---------------------------------------------------------
 Django==5.1
-django-cors-headers==4.4.0
-django-filter==24.3
+asgiref==3.11.1
+sqlparse==0.5.5
+tzdata==2026.2
+
+# --- REST API ------------------------------------------------------------
 djangorestframework==3.15.2
 djangorestframework-gis==1.1
-numpy==1.24.4
-psycopg2==2.9.9
+django-cors-headers==4.4.0
+django-filter==24.3
+
+# --- Database ------------------------------------------------------------
+# psycopg2-binary ships prebuilt wheels, so no local libpq/pg_config build
+# step is required on macOS. Swap for `psycopg2` if you deploy from source.
+psycopg2-binary==2.9.12
+
+# --- Configuration -------------------------------------------------------
 python-decouple==3.8
-python-dotenv==1.0.1
-pyshp==2.3.1
-sqlparse==0.5.1
-tzdata==2024.1
+python-dotenv==1.2.2
+
+# --- Geospatial / data ---------------------------------------------------
+numpy==2.4.4
+shapely==2.1.2
+pyshp==3.0.3
+
+# --- HTTP ----------------------------------------------------------------
+requests==2.33.1

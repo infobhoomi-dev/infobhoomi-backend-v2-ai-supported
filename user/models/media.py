@@ -103,3 +103,29 @@ class Tags_Model(models.Model):
     class Meta:
             managed = True
             db_table = 'tags'
+
+#_______________________________________________ User Activity Log Model ________________________________________________________
+class User_Activity_Log_Model(models.Model):
+    """Generic event log backing the Activity Log dialog's Report generation /
+    Export / Print / Log in-Log out / Feature change-Delete chips — none of
+    these are domain records like a Tag or Reminder, just a record that the
+    user did the thing, so one shared table covers all five instead of five
+    near-identical ones."""
+    id = models.AutoField(primary_key=True)
+
+    # Not every activity is tied to one parcel (login/logout never is; export
+    # of multiple layers may not be either), so this stays nullable — unlike
+    # Tags/Reminders/Inquiries, which always belong to a spatial unit.
+    su_id = models.ForeignKey(
+        'LA_Spatial_Unit_Model', on_delete=models.CASCADE,
+        db_column='su_id', to_field='su_id', null=True, blank=True,
+    )
+
+    user_id_creator = models.IntegerField(null=False)
+    date_created = models.DateTimeField(auto_now_add=True)
+    activity_type = models.CharField(max_length=50, null=False, db_index=True)
+    content = models.TextField(null=True)  # human-readable description, e.g. "Exported 12 features as KML"
+
+    class Meta:
+            managed = True
+            db_table = 'user_activity_log'

@@ -216,11 +216,11 @@ class Query_Parcels_View(APIView):
         logic = str(request.data.get('logic', 'AND')).upper()
 
         if not layer_id:
-            return None, None, Response({'error': 'layer_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+            return None, None, Response({'error': 'layer_id is required'}, status=status.HTTP_400_BAD_REQUEST), None
         try:
             layer_id = int(layer_id)
         except (ValueError, TypeError):
-            return None, None, Response({'error': 'layer_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
+            return None, None, Response({'error': 'layer_id must be an integer'}, status=status.HTTP_400_BAD_REQUEST), None
 
         if layer_id in self.LAND_LAYER_IDS:
             field_map = self.LAND_FIELDS
@@ -232,13 +232,21 @@ class Query_Parcels_View(APIView):
             return None, None, Response(
                 {'error': f'Unsupported layer_id: {layer_id}. Supported: 1, 3, 6, 12'},
                 status=status.HTTP_400_BAD_REQUEST
-            )
+            ), None
 
+        # survey_rep.status is character varying in the DB despite the model's
+        # BooleanField declaration — filter(status=True) makes Django emit a bare
+        # boolean column reference, which Postgres rejects when ANDed with other
+        # conditions. Use the varchar-safe predicate instead of an ORM status= lookup.
         base_qs = Survey_Rep_DATA_Model.objects.filter(
             layer_id=layer_id,
             org_id=request.user.org_id,
-            status=True,
-        )
+        ).extra(where=["status::text NOT IN ('false','False','f','0','no','off')"])
+
+        # Total rows this org has on this layer, ignoring the query's own filter
+        # conditions — lets the console tell "0 results matched your filter"
+        # apart from "your organization has no data on this layer at all".
+        org_total = base_qs.count()
 
         if not conditions:
             qs = base_qs
@@ -265,7 +273,7 @@ class Query_Parcels_View(APIView):
                     return None, None, Response(
                         {'error': f'Invalid value "{value}" for field "{field}"'},
                         status=status.HTTP_400_BAD_REQUEST
-                    )
+                    ), None
 
                 negated  = (operator == '!=')
                 suffix   = self.OPERATOR_MAP.get(operator, '')
@@ -362,16 +370,21 @@ class Query_Parcels_View(APIView):
                 })
             features.append(feat)
 
-        return features, layer_id, None
+        return features, layer_id, None, org_total
 
     def post(self, request):
-        features, layer_id, err = self._run_query(request)
+        features, layer_id, err, org_total = self._run_query(request)
         if err:
             return err
         return Response({
-            'count':    len(features),
-            'layer_id': layer_id,
-            'features': features,
+            'count':          len(features),
+            'layer_id':       layer_id,
+            'features':       features,
+            # true once this org has zero rows on this layer at all, regardless
+            # of the query's filter — lets the console show a clearer message
+            # than a bare "0 features found" when the gap is org-wide, not a
+            # bad filter.
+            'org_has_no_data': org_total == 0,
         }, status=status.HTTP_200_OK)
 
 
@@ -398,7 +411,7 @@ class Query_Parcels_SHP_Export_View(Query_Parcels_View):
         import io, zipfile
         from django.http import HttpResponse
 
-        features, layer_id, err = self._run_query(request)
+        features, layer_id, err, _org_total = self._run_query(request)
         if err:
             return err
 

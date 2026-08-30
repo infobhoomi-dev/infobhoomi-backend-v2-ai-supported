@@ -530,30 +530,102 @@ class Messages_View(ListCreateAPIView):
 
 #________________________________________________ Inquiries View ________________________________________________________________
 class Inquiries_View(ListCreateAPIView):
-    http_method_names = ['post']
+    # Issue: Activity Log "Inquiry" chip 404'd (wrong URL) and had no GET at all.
+    # get() is a manual override (bare Response, not the paginated list() mixin) —
+    # matches every other Activity Log endpoint so results are a plain array.
+    http_method_names = ['get', 'post']
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     queryset = Inquiries_Model.objects.all()
     serializer_class = Inquiries_Serializer
 
+    def get(self, request):
+        inquiries = Inquiries_Model.objects.filter(
+            user_id_creator=request.user.id
+        ).order_by('-date_created')
+        serializer = self.get_serializer(inquiries, many=True)
+        return Response(serializer.data)
+
 #________________________________________________ Reminders View ________________________________________________________________
 class Reminders_View(ListCreateAPIView):
-    http_method_names = ['post']
+    # Issue: Activity Log "Reminder" chip 404'd (wrong URL) and had no GET at all.
+    http_method_names = ['get', 'post']
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     queryset = Reminders_Model.objects.all()
     serializer_class = Reminders_Serializer
 
+    def get(self, request):
+        reminders = Reminders_Model.objects.filter(
+            user_id_creator=request.user.id
+        ).order_by('-date_created')
+        serializer = self.get_serializer(reminders, many=True)
+        return Response(serializer.data)
+
 #________________________________________________ Tags View _____________________________________________________________________
 class Tags_View(ListCreateAPIView):
-    http_method_names = ['post']
+    # Issue: Activity Log "Tag" chip 404'd (wrong URL) and had no GET at all.
+    http_method_names = ['get', 'post']
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     queryset = Tags_Model.objects.all()
     serializer_class = Tags_Serializer
+
+    def get(self, request):
+        tags = Tags_Model.objects.filter(
+            user_id_creator=request.user.id
+        ).order_by('-date_created')
+        serializer = self.get_serializer(tags, many=True)
+        return Response(serializer.data)
+
+#________________________________________________ User Activity Log View (Tier 5) _______________________________________________
+# Activity Log "Report generation" / "Export" / "Print" / "Log in/ Log out" /
+# "Feature change/ Delete" chips. Unlike Tags/Reminders/Inquiries these have no
+# domain record of their own to read — nothing in the app wrote this data
+# anywhere — so the frontend now POSTs a one-line "I did this" event at each
+# action point (see api.service.ts logActivity()), and each chip just reads
+# back its own activity_type slice of the shared log. One factory generates
+# all five endpoints, same pattern as the Lst_* lookup views.
+
+def _activity_log_view(activity_type):
+    class View(ListCreateAPIView):
+        http_method_names = ['get', 'post']
+        authentication_classes = [TokenAuthentication]
+        permission_classes = [IsAuthenticated]
+
+        queryset = User_Activity_Log_Model.objects.all()
+        serializer_class = User_Activity_Log_Serializer
+
+        def get(self, request):
+            rows = User_Activity_Log_Model.objects.filter(
+                user_id_creator=request.user.id, activity_type=activity_type,
+            ).order_by('-date_created')
+            return Response(self.get_serializer(rows, many=True).data)
+
+        def post(self, request):
+            # activity_type and user_id_creator are set server-side — the
+            # client only ever supplies su_id (optional) and content.
+            data = {
+                'su_id': request.data.get('su_id'),
+                'user_id_creator': request.user.id,
+                'activity_type': activity_type,
+                'content': request.data.get('content'),
+            }
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+    return View
+
+
+Report_Generation_Activity_View = _activity_log_view('report_generation')
+Export_Activity_View            = _activity_log_view('export')
+Print_Activity_View             = _activity_log_view('print')
+Login_Logout_Activity_View      = _activity_log_view('login_logout')
+Feature_Change_Delete_Activity_View = _activity_log_view('feature_change_delete')
 
 #________________________________________________ Assessment Ward View __________________________________________________________
 class Assessment_Ward_View(ListCreateAPIView):

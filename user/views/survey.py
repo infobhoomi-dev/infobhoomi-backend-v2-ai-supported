@@ -1044,8 +1044,18 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
         layer_id}.  Units come before their buildings so geometry snapshots stay
         coherent (leaf-first deletion).
         """
+        # NOTE: survey_rep.status is character varying in the DB even though the
+        # model declares BooleanField — filter(status=True) makes Django emit a
+        # bare boolean column reference, which Postgres rejects when ANDed with
+        # other conditions ("argument of AND must be type boolean, not type
+        # character varying"). Use the same varchar-safe predicate as
+        # Survey_Rep_DATA_Filter_User_View instead of an ORM status= lookup.
+        active_status = ["status::text NOT IN ('false','False','f','0','no','off')"]
+
         descendants = []
-        ref_children = list(Survey_Rep_DATA_Model.objects.filter(ref_id=primary.id, status=True))
+        ref_children = list(
+            Survey_Rep_DATA_Model.objects.filter(ref_id=primary.id).extra(where=active_status)
+        )
         for child in ref_children:
             child_su = child.su_id_id
             kind = 'building' if child.layer_id == 3 else 'legal_space'
@@ -1053,8 +1063,8 @@ class Survey_Rep_DATA_BulkDelete_id_View(APIView):
             # Units inside a building (collected first → leaf-first order)
             if kind == 'building' and child_su:
                 units = Survey_Rep_DATA_Model.objects.filter(
-                    parent_id__contains=[child_su], layer_id=12, status=True,
-                )
+                    parent_id__contains=[child_su], layer_id=12,
+                ).extra(where=active_status)
                 for unit in units:
                     descendants.append({
                         'row': unit, 'su_id': unit.su_id_id, 'space_kind': 'unit',
