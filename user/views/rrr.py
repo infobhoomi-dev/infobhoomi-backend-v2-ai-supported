@@ -933,3 +933,124 @@ class RRR_Audit_History_View(APIView):
             )
         )
         return Response(records, status=status.HTTP_200_OK)
+
+
+#________________________________________________ Activity Log — Rights / Responsibilities / Mortgages ________________
+# Tier 3 of the Activity Log chip audit: these three chips have no data of their
+# own — they're views over la_rrr_audit (the same table RRR_Audit_History_View
+# already reads), narrowed to "my" changes and flattened to the flat row shape
+# the frontend table expects. One shared helper avoids writing the same
+# party-name resolution and su_id/rrr_id/action query three times.
+
+def _rrr_activity_rows(user_id, snapshot_filter=None):
+    """CREATE/UPDATE audit rows the given user made, newest first, with party
+    pids already resolved to display names."""
+    qs = LA_RRR_Audit_Model.objects.filter(
+        changed_by=user_id,
+        action__in=[LA_RRR_Audit_Model.CREATE, LA_RRR_Audit_Model.UPDATE],
+    )
+    if snapshot_filter:
+        qs = qs.filter(**snapshot_filter)
+    rows = list(qs.order_by('-changed_at').values(
+        'su_id', 'rrr_id', 'action', 'changed_at', 'snapshot'
+    ))
+
+    party_ids = {
+        p.get('pid_id')
+        for r in rows
+        for p in (r['snapshot'] or {}).get('parties') or []
+        if p.get('pid_id') is not None
+    }
+    party_names = dict(
+        Party_Model.objects.filter(pid__in=party_ids).values_list(
+            'pid', 'party_full_name'
+        )
+    ) if party_ids else {}
+
+    for r in rows:
+        snap = r.pop('snapshot') or {}
+        parties = snap.get('parties') or []
+        r['party'] = ', '.join(
+            party_names.get(p.get('pid_id'), f"pid {p.get('pid_id')}") for p in parties
+        ) or None
+        r['share'] = parties[0].get('share') if parties else None
+        time_begin = snap.get('time_begin')
+        time_end = snap.get('time_end')
+        r['time_spec'] = f"{time_begin or 'N/A'} to {time_end or 'ongoing'}"
+        r['date_created'] = r.pop('changed_at')
+        r['_mortgage'] = snap.get('mortgage')  # consumed + stripped by the Mortgages view only
+    return rows
+
+
+class RRR_Rights_Activity_View(APIView):
+    """GET /api/user/sl-rights-activity/ — Activity Log "Rights" chip."""
+    http_method_names = ['get']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        rows = _rrr_activity_rows(request.user.id, {'snapshot__rrr_type': 'RIGHT'})
+        for r in rows:
+            r.pop('_mortgage', None)
+            r['right_type'] = 'RIGHT'
+        return Response(rows, status=status.HTTP_200_OK)
+
+
+class RRR_Responsibility_Activity_View(APIView):
+    """GET /api/user/la-responsibility-activity/ — Activity Log "Responsibilities" chip."""
+    http_method_names = ['get']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        rows = _rrr_activity_rows(request.user.id, {'snapshot__rrr_type': 'RESPONSIBILITY'})
+        for r in rows:
+            r.pop('_mortgage', None)
+            r['responsibility_type'] = 'RESPONSIBILITY'
+        return Response(rows, status=status.HTTP_200_OK)
+
+
+class RRR_Admin_Restriction_Activity_View(APIView):
+    """GET /api/user/sl-admin-restrict-activity/ — Activity Log "Admin_Restriction" chip.
+    RESTRICTION is the third first-class rrr_type alongside RIGHT/RESPONSIBILITY
+    (see LA_RRR_Model.rrr_type) — same pattern as the two views above. The old
+    dead SL_Admin_Restrict_Model also carried a legal-space/legal-provision
+    reference and a separate "governing party"; the unified schema doesn't keep
+    those as distinct fields, so those two columns come back null rather than
+    being guessed at.
+    """
+    http_method_names = ['get']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        rows = _rrr_activity_rows(request.user.id, {'snapshot__rrr_type': 'RESTRICTION'})
+        for r in rows:
+            r.pop('_mortgage', None)
+            r['sl_adm_res_type'] = 'RESTRICTION'
+            r['adm_res_legal_space'] = None
+            r['adm_res_legal_prov'] = None
+            r['gov_party'] = r.get('party')
+        return Response(rows, status=status.HTTP_200_OK)
+
+
+class RRR_Mortgage_Activity_View(APIView):
+    """GET /api/user/la-mortgage-activity/ — Activity Log "Mortgages" chip.
+    Mortgage is an attachment on any RRR (see _write_rrr_audit), not an
+    rrr_type value, so this filters on snapshot.mortgage being present."""
+    http_method_names = ['get']
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        rows = _rrr_activity_rows(request.user.id, {'snapshot__mortgage__isnull': False})
+        for r in rows:
+            m = r.pop('_mortgage', None) or {}
+            r['sl_mortgage_type'] = m.get('mortgage_type')
+            r['amount'] = m.get('amount')
+            r['int_rate'] = m.get('interest')
+            r['ranking'] = m.get('ranking')
+            r['mort_id'] = m.get('mortgage_ref_id')
+            r['mortgagor'] = r.get('party')
+            r['mortgagee'] = m.get('mortgagee')
+        return Response(rows, status=status.HTTP_200_OK)

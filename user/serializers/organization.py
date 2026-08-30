@@ -172,6 +172,12 @@ class Tags_Serializer(serializers.ModelSerializer):
         model = Tags_Model
         fields = '__all__'
 
+#_______________________________________________ User Activity Log Serializer ____________________________________
+class User_Activity_Log_Serializer(serializers.ModelSerializer):
+    class Meta:
+        model = User_Activity_Log_Model
+        fields = '__all__'
+
 #_______________________________________________ Organization Location Serializer ________________________________
 class Org_Location_Serializer(GeoFeatureModelSerializer):
 

@@ -31,6 +31,7 @@ from user.models import (
     LA_Admin_Source_Model,
     LA_RRR_Model,
     Party_Model,
+    Party_Roles_Model,
     LA_LS_Zoning_Model,
     LA_LS_Physical_Env_Model,
 )
@@ -226,14 +227,13 @@ class Command(BaseCommand):
 
             # ---- survey_rep ----------------------------------------------------------------------------------------------------
             Survey_Rep_DATA_Model.objects.create(
-                su_id=su_id,
+                su_id_id=su_id,
                 user_id=user_id,
                 layer_id=1,
-                infobhoomi_id=f'LP-{su_id}',
                 geom_type='Polygon',
-                area=Decimal(str(round(area_m2, 4))),
+                calculated_area=Decimal(str(round(area_m2, 4))),
                 dimension_2d_3d='2D',
-                reference_coordinate=GEOSGeometry(f'SRID=4326;POINT({clon} {clat})'),
+                reference_coordinate='EPSG:4326',
                 geom=parcel_geom,
                 status=True,
                 gnd_id=None,
@@ -244,10 +244,7 @@ class Command(BaseCommand):
             su = LA_Spatial_Unit_Model.objects.create(
                 su_id=su_id,
                 status=True,
-                ladm_value='LandParcel',
                 label=f'LP-{su_id}',
-                util_obj_id=su_id,
-                util_obj_code='LAND',
             )
 
             # ---- la_ls_land_unit ------------------------------------------------------------------------------------------
@@ -310,12 +307,10 @@ class Command(BaseCommand):
             # ---- tax_info --------------------------------------------------------------------------------------------------------
             Tax_Info_Model.objects.create(
                 su_id=su,
-                tax_no=f'TAX-{su_id}',
                 tax_annual_value=(land_val * Decimal('0.03')).quantize(Decimal('0.01')),
                 tax_percentage=Decimal('3.00'),
                 tax_date=date(rng.randint(2020, 2025), 1, 1),
                 tax_type='Property Tax',
-                tax_name=LAND_NAMES[i],
             )
 
             # ---- sl_ba_unit ----------------------------------------------------------------------------------------------------
@@ -330,19 +325,25 @@ class Command(BaseCommand):
             adm_src = LA_Admin_Source_Model.objects.create(
                 admin_source_type='DeedOfTransfer',
                 done_by=user_id,
+                user_id=user_id,
                 status=True,
             )
 
-            # ---- la_rrr ------------------------------------------------------------------------------------------------------------
-            LA_RRR_Model.objects.create(
+            # ---- la_rrr + party role (ownership share/type now live on Party_Roles_Model) ----------------------------
+            rrr = LA_RRR_Model.objects.create(
                 ba_unit_id=ba,
                 admin_source_id=adm_src,
-                pid=owner,
-                share_type='FULL',
-                share=Decimal('1.00'),
                 rrr_type='RIGHT',
                 time_begin=date(rng.randint(2000, 2023), 1, 1),
                 description=f'Freehold ownership of {LAND_NAMES[i]}',
+            )
+            Party_Roles_Model.objects.create(
+                pid=owner,
+                rrr_id=rrr,
+                party_role_type='OWNER',
+                share_type='FULL',
+                share=Decimal('1.00'),
+                done_by=user_id,
             )
 
             # ---- building (for selected parcels) ----------------------------------------------------------
@@ -369,12 +370,11 @@ class Command(BaseCommand):
         bldg_geom, bldg_area = self._building_polygon(col, row)
 
         Survey_Rep_DATA_Model.objects.create(
-            su_id=bsu_id,
+            su_id_id=bsu_id,
             user_id=user_id,
             layer_id=3,
-            infobhoomi_id=f'BU-{bsu_id}',
             geom_type='Polygon',
-            area=Decimal(str(round(bldg_area, 4))),
+            calculated_area=Decimal(str(round(bldg_area, 4))),
             dimension_2d_3d='2D',
             geom=bldg_geom,
             status=True,
@@ -386,10 +386,7 @@ class Command(BaseCommand):
         bsu = LA_Spatial_Unit_Model.objects.create(
             su_id=bsu_id,
             status=True,
-            ladm_value='BuildingUnit',
             label=f'BU-{bsu_id}',
-            util_obj_id=bsu_id,
-            util_obj_code='BLDG',
         )
 
         floors = rng.randint(1, 4)
@@ -430,12 +427,10 @@ class Command(BaseCommand):
 
         Tax_Info_Model.objects.create(
             su_id=bsu,
-            tax_no=f'TAX-{bsu_id}',
             tax_annual_value=(bld_val * Decimal('0.025')).quantize(Decimal('0.01')),
             tax_percentage=Decimal('2.50'),
             tax_date=date(rng.randint(2020, 2025), 1, 1),
             tax_type='Building Tax',
-            tax_name=BUILDING_NAMES[bldg_idx],
         )
 
         b_ba = SL_BA_Unit_Model.objects.create(
@@ -448,18 +443,24 @@ class Command(BaseCommand):
         b_adm_src = LA_Admin_Source_Model.objects.create(
             admin_source_type='BuildingPermit',
             done_by=user_id,
+            user_id=user_id,
             status=True,
         )
 
-        LA_RRR_Model.objects.create(
+        b_rrr = LA_RRR_Model.objects.create(
             ba_unit_id=b_ba,
             admin_source_id=b_adm_src,
-            pid=owner,
-            share_type='FULL',
-            share=Decimal('1.00'),
             rrr_type='RIGHT',
             time_begin=date(rng.randint(2005, 2022), 1, 1),
             description=f'Ownership of {BUILDING_NAMES[bldg_idx]}',
+        )
+        Party_Roles_Model.objects.create(
+            pid=owner,
+            rrr_id=b_rrr,
+            party_role_type='OWNER',
+            share_type='FULL',
+            share=Decimal('1.00'),
+            done_by=user_id,
         )
 
         # ---- la_ls_utinet_bu (utility connections) -------------------------

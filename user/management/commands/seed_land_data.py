@@ -119,11 +119,14 @@ class Command(BaseCommand):
         if not dry_run:
             org_filter = f"AND org_id = {org_id}" if org_id else ""
             with connection.cursor() as cur:
+                # status is character varying in the DB despite the model's BooleanField
+                # declaration (see user/views/search.py) — a bare `status = true` errors
+                # with a type mismatch, so use the same varchar-safe predicate.
                 cur.execute(f"""
                     UPDATE survey_rep
-                    SET area = ST_Area(ST_Transform(geom::geometry, 32644))
+                    SET calculated_area = ST_Area(ST_Transform(geom::geometry, 32644))
                     WHERE layer_id IN (1, 6)
-                      AND status = true
+                      AND status::text NOT IN ('false','False','f','0','no','off')
                       AND geom IS NOT NULL
                       {org_filter}
                 """)
@@ -133,11 +136,13 @@ class Command(BaseCommand):
             self.stdout.write('  (dry-run — skip)')
 
         # ── Step 2: Load existing records ──────────────────────────────────────
-        qs = Survey_Rep_DATA_Model.objects.filter(layer_id__in=[1, 6], status=True)
+        qs = Survey_Rep_DATA_Model.objects.filter(layer_id__in=[1, 6]).extra(
+            where=["status::text NOT IN ('false','False','f','0','no','off')"]
+        )
         if org_id:
             qs = qs.filter(org_id=org_id)
 
-        surveys = list(qs.values('id', 'su_id_id', 'area', 'org_id'))
+        surveys = list(qs.values('id', 'su_id_id', 'calculated_area', 'org_id'))
         self.stdout.write(self.style.MIGRATE_HEADING(
             f'Step 2: Processing {len(surveys)} land parcel records…'))
 
@@ -197,7 +202,7 @@ class Command(BaseCommand):
                 ))
 
             # ── Assessment attributes ──────────────────────────────────────────
-            area_m2 = float(survey['area'] or 0) or r.uniform(200, 2000)  # fallback if area=0
+            area_m2 = float(survey['calculated_area'] or 0) or r.uniform(200, 2000)  # fallback if area=0
             # Market value: LKR/m² depends on land type and a random multiplier
             rate_lkr_per_m2 = {
                 'Residential':   r.uniform(8_000, 45_000),
